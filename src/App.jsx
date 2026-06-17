@@ -131,14 +131,14 @@ function buildBarcodeTop(design, jobbers, productionDate) {
     const proc = (design.processes||{})[pm.name];
     if (proc && proc.jobber && proc.rate) {
       const j = jobbers.find(x => x.id === proc.jobber);
-      const prefix = proc.prefix || j?.prefix || "";
+      const prefix = proc.prefix || codeForProcess(j, pm.name);
       const code = buildCode(prefix, proc.rate);
       if (code) procEntries.push({ code, date: proc.recdDate || proc.date || "" });
     }
     (proc?.splits||[]).forEach(sp => {
       if (sp.jobber && sp.rate) {
         const sj = jobbers.find(x => x.id === sp.jobber);
-        const sprefix = sp.prefix || sj?.prefix || "";
+        const sprefix = sp.prefix || codeForProcess(sj, pm.name);
         const scode = buildCode(sprefix, sp.rate);
         if (scode) procEntries.push({ code: scode, date: sp.recdDate || "" });
       }
@@ -209,10 +209,25 @@ function rowToD(r) {
   };
 }
 function jToRow(j) {
-  return { id: j.id, name: j.name||"", pin: j.pin||"", process: j.process||"", prefix: j.prefix||"", phone: j.phone||"", gst: j.gst||"", email: j.email||"", address: j.address||"", role: j.role||"jobber", contacts: j.contacts||[] };
+  return { id: j.id, name: j.name||"", pin: j.pin||"", process: j.process||"", prefix: j.prefix||"", process_codes: j.processCodes||[], phone: j.phone||"", gst: j.gst||"", email: j.email||"", address: j.address||"", role: j.role||"jobber", contacts: j.contacts||[] };
 }
 function rowToJ(r) {
-  return { id: r.id, name: r.name||"", pin: r.pin||"", process: r.process||"", prefix: r.prefix||"", phone: r.phone||"", gst: r.gst||"", email: r.email||"", address: r.address||"", role: r.role||"jobber", contacts: r.contacts||[] };
+  let pc = r.process_codes||[];
+  if ((!pc || pc.length===0) && (r.process||r.prefix)) pc = [{ process: r.process||"", code: r.prefix||"" }];
+  return { id: r.id, name: r.name||"", pin: r.pin||"", process: r.process||"", prefix: r.prefix||"", processCodes: pc, phone: r.phone||"", gst: r.gst||"", email: r.email||"", address: r.address||"", role: r.role||"jobber", contacts: r.contacts||[] };
+}
+// helper: get a jobber's code for a given process (falls back to prefix)
+function codeForProcess(jobber, processName) {
+  if (!jobber) return "";
+  const pc = (jobber.processCodes||[]).find(x => x.process===processName);
+  if (pc) return pc.code;
+  return jobber.prefix || "";
+}
+// helper: does jobber do this process?
+function jobberDoesProcess(jobber, processName) {
+  if (!jobber) return false;
+  if ((jobber.processCodes||[]).some(x => x.process===processName)) return true;
+  return jobber.process===processName;
 }
 function mvToRow(mv, did) {
   return { id: mv.id, design_id: did, date: mv.date||"", jobber: mv.jobber||"", received_from: mv.receivedFrom||"", sent_to: mv.sentTo||"", qty: mv.qty||0, remark: mv.remark||"", status: mv.status||"pending" };
@@ -336,14 +351,14 @@ function CombinedBarcode({ design, jobbers }) {
     const proc = (design.processes||{})[pm.name];
     if (proc && proc.jobber && proc.rate) {
       const j = jobbers.find(x => x.id === proc.jobber);
-      const prefix = proc.prefix || j?.prefix || "";
+      const prefix = proc.prefix || codeForProcess(j, pm.name);
       const code = buildCode(prefix, proc.rate);
       if (code) parts.push(code);
     }
     (proc?.splits||[]).forEach(sp => {
       if (sp.jobber && sp.rate) {
         const sj = jobbers.find(x => x.id === sp.jobber);
-        const sprefix = sp.prefix || sj?.prefix || "";
+        const sprefix = sp.prefix || codeForProcess(sj, pm.name);
         const scode = buildCode(sprefix, sp.rate);
         if (scode) parts.push(scode);
       }
@@ -887,7 +902,7 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
             const splits = proc.splits || [];
             const jobber = jobbers.find(j => j.id===proc.jobber);
             const jName = jobber?.name || "—";
-            const prefix = proc.prefix || jobber?.prefix || "";
+            const prefix = proc.prefix || codeForProcess(jobber, p);
             const code = buildCode(prefix, proc.rate);
             const colspan = isAdmin ? 8 : 3;
             return (
@@ -902,7 +917,12 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
                     {isAdmin
                       ? <select value={proc.jobber||""} onChange={e => onUpdate(p,"jobber",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11, width:"100%" }}>
                           <option value="">— select —</option>
-                          {jobbers.map(j => <option key={j.id} value={j.id}>{j.name}{j.prefix?` (${j.prefix})`:""}</option>)}
+                          <optgroup label={`Does ${p}`}>
+                            {jobbers.filter(j => jobberDoesProcess(j,p)).map(j => <option key={j.id} value={j.id}>{j.name} ({codeForProcess(j,p)})</option>)}
+                          </optgroup>
+                          <optgroup label="All others">
+                            {jobbers.filter(j => !jobberDoesProcess(j,p)).map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+                          </optgroup>
                         </select>
                       : <span style={{ color:T.text, padding:"8px 10px", display:"block" }}>{jName}</span>
                     }
@@ -920,7 +940,7 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
                 </tr>
                 {splits.map((sp, si) => {
                   const sjob = jobbers.find(j => j.id===sp.jobber);
-                  const sprefix = sp.prefix || sjob?.prefix || "";
+                  const sprefix = sp.prefix || codeForProcess(sjob, p);
                   const scode = buildCode(sprefix, sp.rate);
                   return (
                     <tr key={p+"_s"+si} style={{ background:i%2===0?T.card:T.surface, borderBottom: si===splits.length-1?`1px solid ${T.border}`:"none" }}>
@@ -1456,12 +1476,12 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       const { idx, field: f2, value } = val;
       const splits = [...(cur.splits||[])];
       let extra = {};
-      if (f2 === "jobber") { const j = jobbers.find(x => x.id === value); extra.prefix = j?.prefix || ""; }
+      if (f2 === "jobber") { const j = jobbers.find(x => x.id === value); extra.prefix = codeForProcess(j, proc); }
       splits[idx] = { ...splits[idx], [f2]: value, ...extra };
       newProc.splits = splits;
     } else {
       let extra = {};
-      if (field === "jobber") { const j = jobbers.find(x => x.id === val); extra.prefix = j?.prefix || ""; }
+      if (field === "jobber") { const j = jobbers.find(x => x.id === val); extra.prefix = codeForProcess(j, proc); }
       newProc = { ...newProc, [field]: val, ...extra };
     }
     const updated = { ...design, processes:{ ...design.processes, [proc]: newProc }, editedBy:currentUser, editedAtStr:nowStr() };
@@ -1552,7 +1572,7 @@ function ProcessAssignRow({ procName, jobbers, value, onChange, onAddJobber }) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPrefix, setNewPrefix] = useState("");
-  const list = showAll ? jobbers : jobbers.filter(j => j.process === procName);
+  const list = showAll ? jobbers : jobbers.filter(j => jobberDoesProcess(j, procName));
   async function addNew() {
     if (!newName.trim()) return;
     const created = await onAddJobber({ name:newName.trim(), process:procName, prefix:newPrefix.trim() });
@@ -1608,7 +1628,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   }
   function removePhoto(id) { setD(f => ({...f, photos:(f.photos||[]).filter(p => p.id!==id)})); }
   function assignProc(procName, jobberId) {
-    setD(f => ({ ...f, processes: { ...f.processes, [procName]: { ...(f.processes?.[procName]||{}), jobber: jobberId, prefix: jobbers.find(j => j.id===jobberId)?.prefix || "" } } }));
+    setD(f => ({ ...f, processes: { ...f.processes, [procName]: { ...(f.processes?.[procName]||{}), jobber: jobberId, prefix: codeForProcess(jobbers.find(j => j.id===jobberId), procName) } } }));
   }
   async function handleSave() { setSaving(true); await onSave(d); setSaving(false); }
   const chk = (label, key) => (
@@ -1891,7 +1911,7 @@ function JobberDesigns({ jobber, designs, onClose }) {
 }
 
 // ── People Manager (Jobbers + Team Members) ───────────────────────────────────
-const BLANK_P = { name:"", pin:"", process:"Stitch", prefix:"", phone:"", gst:"", address:"", email:"", role:"jobber", contacts:[] };
+const BLANK_P = { name:"", pin:"", process:"", prefix:"", processCodes:[], phone:"", gst:"", address:"", email:"", role:"jobber", contacts:[] };
 function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(BLANK_P);
@@ -1905,10 +1925,27 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
   function addContact() { setForm(f => ({ ...f, contacts:[...(f.contacts||[]), { id:`CT${Date.now()}`, name:"", phone:"", role:"" }] })); }
   function updContact(id, k, v) { setForm(f => ({ ...f, contacts:(f.contacts||[]).map(c => c.id===id ? {...c,[k]:v} : c) })); }
   function removeContact(id) { setForm(f => ({ ...f, contacts:(f.contacts||[]).filter(c => c.id!==id) })); }
+  function toggleProcess(pn) {
+    setForm(f => {
+      const has = (f.processCodes||[]).some(x => x.process===pn);
+      const pc = has ? (f.processCodes||[]).filter(x => x.process!==pn) : [...(f.processCodes||[]), { process:pn, code:"" }];
+      return { ...f, processCodes: pc };
+    });
+  }
+  function setProcessCode(pn, code) {
+    setForm(f => ({ ...f, processCodes: (f.processCodes||[]).map(x => x.process===pn ? {...x, code} : x) }));
+  }
 
   async function save() {
     if (!form.name.trim()) { showToast("Name is required","error"); return; }
     if (!form.pin || String(form.pin).length < 4) { showToast("PIN must be at least 4 digits","error"); return; }
+    // warn if PIN already used by a different person
+    const editingId = (modal && modal.id) ? modal.id : null;
+    const clash = people.find(p => String(p.pin)===String(form.pin) && p.id!==editingId);
+    if (clash) { showToast(`PIN already used by ${clash.name}. Choose a different PIN.`,"error"); return; }
+    // keep legacy process/prefix in sync with first ticked process (for compatibility)
+    const first = (form.processCodes||[])[0];
+    if (first) { form.process = first.process; form.prefix = first.code; }
     setSaving(true);
     if (modal === "add") {
       const id = (form.role==="team"?"T":"J") + String(Date.now()).slice(-6);
@@ -1960,13 +1997,15 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
                 </div>
                 <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" }}>
                   <Badge label={j.role==="team"?"TEAM":"JOBBER"} color={j.role==="team"?T.steelLt:T.gold} />
-                  {j.process && <Badge label={j.process} color={T.steel} />}
+                  {(j.processCodes||[]).length>0
+                    ? (j.processCodes||[]).map(pc => <Badge key={pc.process} label={`${pc.process} ${pc.code}`} color={T.steel} />)
+                    : (j.process && <Badge label={j.process} color={T.steel} />)}
                 </div>
               </div>
               <div style={{ padding:"12px 16px", fontSize:12 }}>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 12px", marginBottom:10 }}>
                   <div><span style={{ color:T.steelLt }}>Phone: </span><span style={{ color:T.text }}>{j.phone||"—"}</span></div>
-                  <div><span style={{ color:T.steelLt }}>Code: </span><span style={{ color:T.gold, fontFamily:T.mono, fontWeight:700 }}>{j.prefix||"—"}</span></div>
+                  <div><span style={{ color:T.steelLt }}>Codes: </span><span style={{ color:T.gold, fontFamily:T.mono, fontWeight:700 }}>{(j.processCodes||[]).length?(j.processCodes||[]).map(p=>p.code).join(", "):(j.prefix||"—")}</span></div>
                   {j.gst && <div style={{ gridColumn:"1/-1" }}><span style={{ color:T.steelLt }}>GST: </span><span style={{ color:T.text, fontFamily:T.mono }}>{j.gst}</span></div>}
                   {(j.contacts||[]).length > 0 && <div style={{ gridColumn:"1/-1", marginTop:4 }}><div style={{ color:T.steelLt, fontSize:11, marginBottom:3 }}>Contacts:</div>{(j.contacts||[]).map(ct => <div key={ct.id} style={{ fontSize:11, color:T.text, paddingLeft:6 }}>• {ct.name}{ct.role?` (${ct.role})`:""}{ct.phone?` — ${ct.phone}`:""}</div>)}</div>}
                   <div><span style={{ color:T.steelLt }}>Designs: </span><span style={{ color:T.gold, fontWeight:700, fontFamily:T.mono }}>{assigned}</span></div>
@@ -1992,12 +2031,30 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
             <Inp label="Full Name *" value={form.name} onChange={upd("name")} placeholder="Full name" />
             <Inp label="Role" value={form.role} onChange={upd("role")} options={["jobber","team"]} />
-            <Inp label="Process / Department" value={form.process||""} onChange={upd("process")} options={PROCESSES} />
-            <Inp label="Barcode Code (process+number, e.g. 31)" value={form.prefix||""} onChange={upd("prefix")} placeholder="e.g. 33 for Gaaj jobber 3" />
             <Inp label="Phone" value={form.phone||""} onChange={upd("phone")} type="tel" />
             <Inp label="GST Number" value={form.gst||""} onChange={upd("gst")} placeholder="GST no." />
           </div>
           <div style={{ marginBottom:12 }}><Inp label="Address / Shop" value={form.address||""} onChange={upd("address")} /></div>
+          {form.role==="jobber" && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8, marginBottom:8 }}>Processes & Barcode Codes (tick each work this person does)</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:8 }}>
+                {PROCESSES.filter(p => p!=="Fabric").map(pn => {
+                  const checked = (form.processCodes||[]).some(x => x.process===pn);
+                  const code = (form.processCodes||[]).find(x => x.process===pn)?.code || "";
+                  return (
+                    <div key={pn} style={{ background:T.surface, borderRadius:6, padding:"8px 10px", border:`1px solid ${checked?T.gold+"66":T.border}` }}>
+                      <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", color:T.text, fontSize:12, marginBottom:checked?6:0 }}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleProcess(pn)} style={{ accentColor:T.gold, width:14, height:14 }} />
+                        {pn}
+                      </label>
+                      {checked && <input value={code} onChange={e => setProcessCode(pn, e.target.value)} placeholder="code e.g. 13" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.gold, fontFamily:T.mono, fontSize:12, padding:"5px 8px", width:"100%", boxSizing:"border-box" }} />}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div style={{ marginBottom:16 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
               <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>Additional Contacts (supervisors / helpers)</span>
@@ -2743,6 +2800,7 @@ function Login({ people, onAdmin, onUser, loadInfo, onRefresh }) {
   const [pin, setPin] = useState("");
   const [adminPin, setAdminPin] = useState("");
   const [err, setErr] = useState("");
+  const [dupes, setDupes] = useState(null);
 
   function tryAdmin() {
     const a = ADMINS.find(x => x.pin === adminPin);
@@ -2750,10 +2808,12 @@ function Login({ people, onAdmin, onUser, loadInfo, onRefresh }) {
     else setErr("Wrong admin PIN");
   }
   function tryUser() {
-    const p = people.find(x => x.id===selP);
-    if (!p) { setErr("Select your name"); return; }
-    if (String(p.pin) !== String(pin)) { setErr("Wrong PIN"); return; }
-    onUser(p);
+    // PIN-only login: match within the chosen role (mode = "team" or "jobber")
+    const matches = people.filter(x => x.role===mode && String(x.pin)===String(pin));
+    if (matches.length === 0) { setErr("Wrong PIN"); return; }
+    if (matches.length === 1) { onUser(matches[0]); return; }
+    // rare: duplicate PIN — ask which name
+    setDupes(matches);
   }
   const PS = { background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontSize:20, textAlign:"center", letterSpacing:8, width:"100%", padding:"12px", boxSizing:"border-box", fontFamily:T.mono, marginBottom:12, outline:"none" };
 
@@ -2787,21 +2847,24 @@ function Login({ people, onAdmin, onUser, loadInfo, onRefresh }) {
             </div>
           </div>
         )}
-        {(mode === "team" || mode === "jobber") && (
+        {(mode === "team" || mode === "jobber") && !dupes && (
           <div>
-            <div style={{ marginBottom:12 }}>
-              <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{mode==="team"?"Team Member":"Jobber"} — Your Name</div>
-              <select value={selP} onChange={e => setSelP(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"8px 12px", fontSize:13, width:"100%", marginBottom:12 }}>
-                <option value="">— select your name —</option>
-                {people.filter(p => p.role===mode).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <input type="password" value={pin} onChange={e => setPin(e.target.value)} onKeyDown={e => e.key==="Enter" && tryUser()} placeholder="PIN" maxLength={6} style={PS} />
-            </div>
+            <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:12, textAlign:"center" }}>{mode==="team"?"Team Member":"Jobber"} — enter your PIN</div>
+            <input type="password" value={pin} onChange={e => setPin(e.target.value)} onKeyDown={e => e.key==="Enter" && tryUser()} placeholder="PIN" maxLength={6} autoFocus style={PS} />
             {err && <div style={{ color:T.red, fontSize:11, marginBottom:8, textAlign:"center" }}>{err}</div>}
             <div style={{ display:"flex", gap:10 }}>
-              <Btn label="Back" onClick={() => { setMode("select"); setErr(""); setPin(""); setSelP(""); }} color={T.surface} textColor={T.steelLt} style={{ flex:1 }} />
+              <Btn label="Back" onClick={() => { setMode("select"); setErr(""); setPin(""); }} color={T.surface} textColor={T.steelLt} style={{ flex:1 }} />
               <Btn label="Login" onClick={tryUser} style={{ flex:2 }} />
             </div>
+          </div>
+        )}
+        {dupes && (
+          <div>
+            <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:12, textAlign:"center" }}>Select your name</div>
+            {dupes.map(p => (
+              <button key={p.id} onClick={() => onUser(p)} style={{ display:"block", width:"100%", background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:8, padding:"12px", marginBottom:8, fontFamily:T.sans, fontSize:14, cursor:"pointer" }}>{p.name}</button>
+            ))}
+            <Btn label="Back" onClick={() => { setDupes(null); setPin(""); }} color={T.surface} textColor={T.steelLt} style={{ width:"100%" }} />
           </div>
         )}
       </div>
