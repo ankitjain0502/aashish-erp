@@ -2951,6 +2951,16 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
   const [monthFilter, setMonthFilter] = useState("");
   function showToast(msg, type="success") { setToast({msg,type}); setTimeout(() => setToast({msg:"",type:""}), 3000); }
   const jobbers = people.filter(p => p.role==="jobber");
+  async function markNotifRead(n) {
+    if ((n.readBy||[]).includes(currentUser)) return;
+    const updated = { ...n, readBy:[...(n.readBy||[]), currentUser] };
+    setNotifications(prev => prev.map(x => x.id===n.id ? updated : x));
+    await dbUpsert("notifications", notifToRow(updated));
+  }
+  function openDesignById(id) {
+    const d = designs.find(x => x.id===id);
+    if (d) { setTab("Designs"); setSel(d); }
+  }
   // late designs = older than 60 days from creation and not completed
   const lateDesigns = designs.filter(d => d.status!=="Completed" && (ageDays(d.createdAtStr || d.dateProgram) ?? 0) > 60);
   // month options from design dates
