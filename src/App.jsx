@@ -183,7 +183,7 @@ function buildFabricBlock(block) {
 
 function dToRow(d) {
   return {
-    id: d.id, design_no: d.designNo||"", lot_no: d.lotNo||"", brand: d.brand||"", style: d.style||"",
+    id: d.id, design_no: d.designNo||"", lot_no: d.lotNo||"", sleeve_type: d.sleeveType||"Full", brand: d.brand||"", style: d.style||"",
     fabric: d.fabric||"", supplier: d.supplier||"", p1_code: d.p1Code||"",
     p1_mrp: d.p1MRP||"", p2_code: d.p2Code||"", p2_mrp: d.p2MRP||"",
     fit: d.fit||"", collar_type: d.collarType||"",
@@ -208,7 +208,7 @@ function dToRow(d) {
 }
 function rowToD(r) {
   return {
-    id: r.id, designNo: r.design_no||"", lotNo: r.lot_no||"", brand: r.brand||"", style: r.style||"",
+    id: r.id, designNo: r.design_no||"", lotNo: r.lot_no||"", sleeveType: r.sleeve_type||"Full", brand: r.brand||"", style: r.style||"",
     fabric: r.fabric||"", supplier: r.supplier||"", p1Code: r.p1_code||"",
     p1MRP: r.p1_mrp||"", p2Code: r.p2_code||"", p2MRP: r.p2_mrp||"",
     fit: r.fit||"", collarType: r.collar_type||"",
@@ -450,6 +450,99 @@ function CombinedBarcode({ design, jobbers }) {
         ? <div style={{ fontFamily:T.mono, fontSize:18, color:T.gold, fontWeight:700, letterSpacing:2 }}>{full}</div>
         : <div style={{ fontFamily:T.mono, fontSize:12, color:T.textDim }}>Assign jobbers & rates to generate the code</div>
       }
+    </div>
+  );
+}
+
+// ── Translations for jobber-facing labels (EN / Hindi / Gujarati) ─────────────
+const TRANSLATIONS = {
+  "Send To Next": { hi:"आगे भेजें", gu:"આગળ મોકલો" },
+  "Who are you sending this lot to?": { hi:"यह लॉट किसको भेज रहे हैं?", gu:"આ લોટ કોને મોકલો છો?" },
+  "Send To": { hi:"भेजें", gu:"મોકલો" },
+  "select": { hi:"चुनें", gu:"પસંદ કરો" },
+  "Office / Admin": { hi:"ऑफिस / एडमिन", gu:"ઓફિસ / એડમિન" },
+  "Quantity (pieces)": { hi:"मात्रा (पीस)", gu:"જથ્થો (પીસ)" },
+  "Note (optional)": { hi:"नोट (वैकल्पिक)", gu:"નોંધ (વૈકલ્પિક)" },
+  "e.g. half stitched": { hi:"जैसे आधा सिला", gu:"દા.ત. અડધું સીવેલું" },
+  "Cancel": { hi:"रद्द करें", gu:"રદ કરો" },
+  "Send": { hi:"भेजें", gu:"મોકલો" },
+  "Confirm & Lock": { hi:"पक्का करें और लॉक करें", gu:"કન્ફર્મ અને લોક કરો" },
+  "Logout": { hi:"लॉग आउट", gu:"લોગ આઉટ" },
+};
+function makeL(lang) {
+  return (txt) => {
+    if (lang === "en" || !TRANSLATIONS[txt]) return txt;
+    return TRANSLATIONS[txt][lang] || txt;
+  };
+}
+function LangToggle({ lang, setLang }) {
+  const opts = [["en","EN"],["hi","हिं"],["gu","ગુ"]];
+  return (
+    <div style={{ display:"flex", gap:2, background:T.surface, borderRadius:6, padding:2 }}>
+      {opts.map(([code,label]) => (
+        <button key={code} onClick={() => setLang(code)} style={{ background:lang===code?T.gold:"none", color:lang===code?T.bg:T.steelLt, border:"none", borderRadius:4, padding:"4px 8px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>{label}</button>
+      ))}
+    </div>
+  );
+}
+// ── Send-To modal (jobber passes lot to next jobber or office) ────────────────
+function SendToModal({ design, people, fromJobber, onClose, onSend, L = (x)=>x }) {
+  const jobbers = people.filter(p => p.role==="jobber" && p.id!==(fromJobber&&fromJobber.id));
+  const [toId, setToId] = useState("");
+  const [qty, setQty] = useState("");
+  const [remark, setRemark] = useState("");
+  const isOffice = toId === "__office__";
+  function send() {
+    if (!toId || !qty) return;
+    const toName = isOffice ? "Office / Admin" : ((people.find(p=>p.id===toId)||{}).name || "");
+    onSend({ id:`MV${Date.now()}`, date:new Date().toISOString().slice(0,10), jobber:(fromJobber&&fromJobber.name)||"", sentTo:toName, sentToId:isOffice?"":toId, receivedFrom:(fromJobber&&fromJobber.name)||"", qty:+qty, remark, status:"sent" });
+  }
+  return (
+    <Modal title={L("Send To Next")} onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:12 }}>{L("Who are you sending this lot to?")}</div>
+      <div style={{ marginBottom:12 }}>
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{L("Send To")}</div>
+        <select value={toId} onChange={e=>setToId(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"10px 12px", fontSize:14, width:"100%" }}>
+          <option value="">— {L("select")} —</option>
+          <option value="__office__">🏢 {L("Office / Admin")}</option>
+          {jobbers.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+        </select>
+      </div>
+      <div style={{ marginBottom:12 }}>
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{L("Quantity (pieces)")}</div>
+        <input type="number" value={qty} onChange={e=>setQty(e.target.value)} placeholder="0" style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"10px 12px", fontSize:16, width:"100%", boxSizing:"border-box" }} />
+      </div>
+      <div style={{ marginBottom:16 }}>
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{L("Note (optional)")}</div>
+        <input value={remark} onChange={e=>setRemark(e.target.value)} placeholder={L("e.g. half stitched")} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"10px 12px", fontSize:14, width:"100%", boxSizing:"border-box" }} />
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label={L("Cancel")} onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label={L("Send")} onClick={send} disabled={!toId||!qty} />
+      </div>
+    </Modal>
+  );
+}
+
+// ── Averages display block (Cost + Net + manual) ─────────────────────────────
+function AveragesBlock({ design }) {
+  const ma = design.manualAvg || {};
+  const items = [
+    ["Cost Avg (total ÷ pcs)", fabricAverage(design)||"—", T.gold],
+    ["Net Avg (less sample)", fabricAverageNet(design)||"—", T.green],
+    ["Avg S–XXL", ma.smxxl||"—", T.steelLt],
+    ["Avg 3XL–5XL", ma.x3to5||"—", T.steelLt],
+    [(ma.bigLabel||"6XL+"), ma.big||"—", T.steelLt],
+    ["Drawing Avg", design.drawingAvg||"—", T.steelLt],
+  ];
+  return (
+    <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:6 }}>
+      {items.map(([l,v,c]) => (
+        <div key={l} style={{ background:T.surface, borderRadius:8, padding:"10px 14px", borderLeft:`3px solid ${c}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>{l}</div>
+          <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:c }}>{v}</div>
+        </div>
+      ))}
     </div>
   );
 }
