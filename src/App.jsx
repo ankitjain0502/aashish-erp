@@ -1940,6 +1940,10 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   function addColor() { setD(f => ({...f, colors:[...f.colors, {id:`C${Date.now()}`,colorName:"",colorNo:"",sleeve:"",meters:"",sizes:{},samples:{},sampleFabric:[],balance:"",swatch:""}]})); }
   function updColor(id,k,v) { setD(f => ({...f, colors:f.colors.map(c => c.id===id?{...c,[k]:v}:c)})); }
   function removeColor(id) { setD(f => ({...f, colors:f.colors.filter(c => c.id!==id)})); }
+  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:""}]})); }
+  function updFabricBill(id,k,v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; })})); }
+  function removeFabricBill(id) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).filter(b => b.id!==id)})); }
+  function fabricBillPhoto(id, file) { if(!file) return; compressImage(file).then(src => updFabricBill(id,"photo",src)).catch(()=>{}); }
   function toggleSize(s) { setD(f => ({...f, activeColors:f.activeColors.includes(s)?f.activeColors.filter(x=>x!==s):[...f.activeColors,s]})); }
   function ensureSpecs(arr) { const have = (arr||[]).map(x=>x.key); return SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"" }); }
   function updSpec(key, field, v) { setD(f => ({ ...f, specs: ensureSpecs(f.specs).map(sp => sp.key===key ? {...sp,[field]:v} : sp) })); }
@@ -1953,7 +1957,11 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   function assignProc(procName, jobberId) {
     setD(f => ({ ...f, processes: { ...f.processes, [procName]: { ...(f.processes?.[procName]||{}), jobber: jobberId, prefix: codeForProcess(jobbers.find(j => j.id===jobberId), procName) } } }));
   }
-  async function handleSave() { setSaving(true); await onSave(d); setSaving(false); }
+  async function handleSave() {
+    const validBills = (d.supplierBills||[]).filter(b => b.supplier && b.qty);
+    if (validBills.length === 0) { alert("Please add at least one Fabric Supplier Bill (supplier + quantity) before creating the design."); return; }
+    setSaving(true); await onSave(d); setSaving(false);
+  }
   const chk = (label, key) => (
     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", color:T.text, fontSize:12 }}>
       <input type="checkbox" checked={d[key]} onChange={tog(key)} style={{ accentColor:T.gold, width:14, height:14 }} />
@@ -2056,6 +2064,27 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           ))}
         </div>
       </Section>
+      <Section title="Fabric Supplier Bill (required)" action={<Btn label="+ Add Fabric Bill" onClick={addFabricBill} small />}>
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>Enter fabric purchase details here. This flows automatically to Fabric Purchases and the cost sheet. At least one bill is required.</div>
+        {(d.supplierBills||[]).length===0 && <div style={{ color:T.orange, fontSize:12, marginBottom:8 }}>⚠ Add at least one fabric supplier bill.</div>}
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {(d.supplierBills||[]).map((b,bi) => (
+            <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${T.border}`, display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+              <FabricBillPhoto bill={b} onPick={file => fabricBillPhoto(b.id, file)} />
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))", gap:8, flex:1 }}>
+                <Inp label="Bill Date" type="date" value={b.billDate} onChange={v => updFabricBill(b.id,"billDate",v)} />
+                <Inp label="Supplier" value={b.supplier} onChange={v => updFabricBill(b.id,"supplier",v)} placeholder="Supplier name" />
+                <Inp label="Quantity (m)" type="number" value={b.qty} onChange={v => updFabricBill(b.id,"qty",v)} />
+                <Inp label="Rate" type="number" value={b.rate} onChange={v => updFabricBill(b.id,"rate",v)} />
+                <Inp label="Amount" type="number" value={b.amount} onChange={v => updFabricBill(b.id,"amount",v)} />
+                <Inp label="Bill No" value={b.billNo} onChange={v => updFabricBill(b.id,"billNo",v)} />
+                <Inp label="LR No" value={b.lrNo} onChange={v => updFabricBill(b.id,"lrNo",v)} />
+              </div>
+              <Btn label="✕" onClick={() => removeFabricBill(b.id)} color={T.red+"22"} textColor={T.red} small />
+            </div>
+          ))}
+        </div>
+      </Section>
       <Section title="Shirt Photos & Details">
         <div style={{ display:"flex", gap:10, marginBottom:14, alignItems:"flex-end" }}>
           <Inp label="Photo Note / Detail" value={photoNote} onChange={setPhotoNote} placeholder="e.g. Front view — collar detail" style={{ flex:1 }} />
@@ -2086,7 +2115,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
       </Section>
       <div style={{ display:"flex", gap:12, justifyContent:"flex-end" }}>
         <Btn label="Cancel" onClick={onCancel} color={T.surface} textColor={T.steelLt} />
-        <Btn label={saving?"Saving…":existing?"Save Changes":"Create Design"} onClick={handleSave} disabled={saving||!d.designNo} />
+        <Btn label={saving?"Saving…":existing?"Save Changes":"Create Design"} onClick={handleSave} disabled={saving||!d.designNo||(d.supplierBills||[]).filter(b=>b.supplier&&b.qty).length===0} />
       </div>
     </div>
   );
@@ -3191,6 +3220,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
 
   async function saveDesign(d) {
     const isNew = creating;
+    d = { ...d, supplierBills:(d.supplierBills||[]).map(b => ({ ...b, designNo: b.designNo||d.designNo })) };
     if (d.lotNo) {
       const clash = designs.find(x => x.lotNo===d.lotNo && x.id!==d.id);
       if (clash) { showToast(`Lot No ${d.lotNo} already used (design ${clash.designNo}). Use a unique lot no.`,"error"); return; }
