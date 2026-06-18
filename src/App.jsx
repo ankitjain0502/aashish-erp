@@ -192,7 +192,7 @@ function dToRow(d) {
     has_embroidery: !!d.hasEmbroidery, has_print: !!d.hasPrint, has_vinyl: !!d.hasVinyl,
     has_pocket: !!d.hasPocket, has_buttons: !!d.hasButtons, has_label: !!d.hasLabel,
     specs: (d.specs||[]).map(sp => ({ key:sp.key, text:sp.text||"", thumb:"" })),
-    ratio: d.ratio||{}, trims: d.trims||"", drawing_avg: d.drawingAvg||"", main_thumb: "", manual_avg: d.manualAvg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" },
+    ratio: d.ratio||{}, trims: d.trims||"", drawing_avg: d.drawingAvg||"", main_thumb: "", manual_avg: { ...(d.manualAvg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }), _formOrder: d.formOrder||[] },
     date_program: d.dateProgram||"", date_cut: d.dateCut||"",
     notes: d.notes||"", active_colors: d.activeColors||[],
     colors: (d.colors||[]).map(c => ({ ...c, swatch: "" })),
@@ -216,7 +216,7 @@ function rowToD(r) {
     placket: r.placket||"", washType: r.wash_type||"",
     hasEmbroidery: !!r.has_embroidery, hasPrint: !!r.has_print, hasVinyl: !!r.has_vinyl,
     hasPocket: !!r.has_pocket, hasButtons: !!r.has_buttons, hasLabel: !!r.has_label,
-    specs: r.specs||[], ratio: r.ratio||{}, trims: r.trims||"", drawingAvg: r.drawing_avg||"", mainThumb: r.main_thumb||"", manualAvg: r.manual_avg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" },
+    specs: r.specs||[], ratio: r.ratio||{}, trims: r.trims||"", drawingAvg: r.drawing_avg||"", mainThumb: r.main_thumb||"", manualAvg: r.manual_avg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, formOrder: (r.manual_avg&&r.manual_avg._formOrder)||[],
     dateProgram: r.date_program||"", dateCut: r.date_cut||"",
     notes: r.notes||"", activeColors: r.active_colors||[], colors: r.colors||[],
     processes: r.processes||{}, photos: r.photos||[],
@@ -1722,7 +1722,7 @@ function ProductionFlow({ design, jobbers }) {
 }
 
 // ── Design Detail (tabbed) ────────────────────────────────────────────────────
-function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber }) {
+function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people }) {
   const isAdmin = role === "admin";
   const isTeam = role === "team";
   const isJobber = role === "jobber";
@@ -1839,7 +1839,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       </div>
       {dt==="Job Sheet" && <Section title="Job Register / Job Sheet" action={<PdfBtn targetId="rpt-jobsheet" title={`Job Register ${design.designNo}`} />}><div id="rpt-jobsheet"><JobSheetView design={design} /></div></Section>}
       {dt==="Flow" && <Section title="Production Flow — full journey" action={<PdfBtn targetId="rpt-flow" title={`Production Flow ${design.designNo}`} />}><div id="rpt-flow"><ProductionFlow design={design} jobbers={jobbers} /></div></Section>}
-      {dt==="Fill Sizes" && <Section title="Job Register — Fill Cut Sizes"><SizeEditor design={design} onUpdate={save} role={role} onConfirmLock={confirmLock} /></Section>}
+      {dt==="Fill Sizes" && <Section title="Job Register — Fill Cut Sizes" action={<PdfBtn targetId="rpt-sizes" title={`Job Register ${designLabel(design)}`} />}><div id="rpt-sizes"><SizeEditor design={design} onUpdate={save} role={role} onConfirmLock={confirmLock} L={L} onSendLot={onSendLot} people={people||jobbers} currentJobber={currentJobber} /></div></Section>}
       {dt==="Customer Orders" && <Section title="Customer Orders"><CustomerOrders design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Photos" && <Section title="Reference Photos & Shirt Details"><ReferencePhotos design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
@@ -1906,6 +1906,19 @@ function FabricBillPhoto({ bill, onPick }) {
 function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
+  const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","fabricbill","photos","process","note"];
+  const [secOrder, setSecOrder] = useState(() => (existing && existing.formOrder && existing.formOrder.length===DEFAULT_ORDER.length) ? existing.formOrder : DEFAULT_ORDER);
+  const [dragKey, setDragKey] = useState(null);
+  function onDrop(targetKey) {
+    if (!dragKey || dragKey===targetKey) return;
+    setSecOrder(order => {
+      const arr = [...order];
+      const from = arr.indexOf(dragKey), to = arr.indexOf(targetKey);
+      arr.splice(from,1); arr.splice(to,0,dragKey);
+      return arr;
+    });
+    setDragKey(null);
+  }
   const [saving, setSaving] = useState(false);
   const fileRef = useRef();
   const [photoNote, setPhotoNote] = useState("");
@@ -1914,7 +1927,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   function addColor() { setD(f => ({...f, colors:[...f.colors, {id:`C${Date.now()}`,colorName:"",colorNo:"",sleeve:"",meters:"",sizes:{},samples:{},sampleFabric:[],balance:"",swatch:""}]})); }
   function updColor(id,k,v) { setD(f => ({...f, colors:f.colors.map(c => c.id===id?{...c,[k]:v}:c)})); }
   function removeColor(id) { setD(f => ({...f, colors:f.colors.filter(c => c.id!==id)})); }
-  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:""}]})); }
+  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:""}]})); }
   function updFabricBill(id,k,v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; })})); }
   function removeFabricBill(id) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).filter(b => b.id!==id)})); }
   function fabricBillPhoto(id, file) { if(!file) return; compressImage(file).then(src => updFabricBill(id,"photo",src)).catch(()=>{}); }
@@ -1934,7 +1947,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   async function handleSave() {
     const validBills = (d.supplierBills||[]).filter(b => b.supplier && b.qty);
     if (validBills.length === 0) { alert("Please add at least one Fabric Supplier Bill (supplier + quantity) before creating the design."); return; }
-    setSaving(true); await onSave(d); setSaving(false);
+    setSaving(true); await onSave({ ...d, formOrder: secOrder }); setSaving(false);
   }
   const chk = (label, key) => (
     <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", color:T.text, fontSize:12 }}>
@@ -1945,6 +1958,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   const G = { display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12, marginBottom:12 };
   return (
     <div style={{ fontFamily:T.sans }}>
+    <div style={{ display:"flex", flexDirection:"column" }}>
+      <div draggable onDragStart={()=>setDragKey("identity")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("identity")} style={{ order: secOrder.indexOf("identity"), border: dragKey==="identity"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Design Identity">
         <div style={G}>
           <Inp label="Design Number *" value={d.designNo} onChange={upd("designNo")} placeholder="e.g. 2084" />
@@ -1967,6 +1983,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           <Inp label="Trims (meters, added on top)" type="number" value={d.trims} onChange={upd("trims")} style={{ minWidth:160 }} />
         </div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("avg")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("avg")} style={{ order: secOrder.indexOf("avg"), border: dragKey==="avg"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Fabric Average — Manual Entry">
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>Auto average = (fabric + trims) ÷ pieces, calculated automatically when sizes are filled. Below are your manual averages per size group.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))", gap:12 }}>
@@ -1979,6 +1998,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           <Inp label="Drawing Average" value={d.drawingAvg} onChange={upd("drawingAvg")} placeholder="manual" />
         </div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("specs")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("specs")} style={{ order: secOrder.indexOf("specs"), border: dragKey==="specs"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Pattern / Garment Specifications">
         <div style={G}>
           <Inp label="Collar Type" value={d.collarType} onChange={upd("collarType")} options={COLLARS} />
@@ -1999,6 +2021,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           ))}
         </div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("sizes")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("sizes")} style={{ order: secOrder.indexOf("sizes"), border: dragKey==="sizes"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Active Sizes (which sizes apply)">
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           {SIZES.map(s => (
@@ -2007,6 +2032,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
         <div style={{ marginTop:8, fontFamily:T.mono, fontSize:10, color:T.textDim }}>Note: actual cut quantities per size are filled later by the jobber.</div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("ratio")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("ratio")} style={{ order: secOrder.indexOf("ratio"), border: dragKey==="ratio"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Size Ratio (per size)">
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
           {d.activeColors.map(sz => (
@@ -2018,6 +2046,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
         <div style={{ marginTop:6, fontFamily:T.mono, fontSize:10, color:T.textDim }}>Ratio for each size (e.g. S=1, M=2, L=2, XL=1).</div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("colors")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("colors")} style={{ order: secOrder.indexOf("colors"), border: dragKey==="colors"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Color Swatches" action={<Btn label="+ Add Color" onClick={addColor} small />}>
         {d.colors.length === 0 && <div style={{ color:T.textDim, fontSize:12 }}>No colors added yet. Add a swatch photo and name for each fabric color.</div>}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12 }}>
@@ -2038,6 +2069,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           ))}
         </div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("fabricbill")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("fabricbill")} style={{ order: secOrder.indexOf("fabricbill"), border: dragKey==="fabricbill"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Fabric Supplier Bill (required)" action={<Btn label="+ Add Fabric Bill" onClick={addFabricBill} small />}>
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>Enter fabric purchase details here. This flows automatically to Fabric Purchases and the cost sheet. At least one bill is required.</div>
         {(d.supplierBills||[]).length===0 && <div style={{ color:T.orange, fontSize:12, marginBottom:8 }}>⚠ Add at least one fabric supplier bill.</div>}
@@ -2046,6 +2080,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
             <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${T.border}`, display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
               <FabricBillPhoto bill={b} onPick={file => fabricBillPhoto(b.id, file)} />
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))", gap:8, flex:1 }}>
+                <Inp label="Type" value={b.billType||"Fabric"} onChange={v => updFabricBill(b.id,"billType",v)} options={["Fabric","Trims"]} />
                 <Inp label="Bill Date" type="date" value={b.billDate} onChange={v => updFabricBill(b.id,"billDate",v)} />
                 <Inp label="Supplier" value={b.supplier} onChange={v => updFabricBill(b.id,"supplier",v)} placeholder="Supplier name" />
                 <Inp label="Quantity (m)" type="number" value={b.qty} onChange={v => updFabricBill(b.id,"qty",v)} />
@@ -2058,7 +2093,36 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
             </div>
           ))}
         </div>
+        {(() => {
+          const colourMeters = (d.colors||[]).reduce((a,c)=>a+(+c.meters||0),0);
+          const fabricBillQty = (d.supplierBills||[]).filter(b=>(b.billType||"Fabric")==="Fabric").reduce((a,b)=>a+(+b.qty||0),0);
+          const trimsBillQty = (d.supplierBills||[]).filter(b=>b.billType==="Trims").reduce((a,b)=>a+(+b.qty||0),0);
+          const diff = +(fabricBillQty - colourMeters).toFixed(2);
+          const match = Math.abs(diff) < 0.01;
+          return (
+            <div style={{ marginTop:14, background:T.bg, borderRadius:8, padding:"12px 16px", border:`1px solid ${match?T.green:T.orange}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:8, alignItems:"center" }}>
+                <div style={{ fontFamily:T.mono, fontSize:12, color:T.steelLt }}>
+                  Fabric bills: <b style={{color:T.gold}}>{fabricBillQty} m</b> &nbsp;·&nbsp; Colour swatches total: <b style={{color:T.white}}>{colourMeters} m</b>
+                  {trimsBillQty>0 && <span> &nbsp;·&nbsp; Trims bills: <b style={{color:T.gold}}>{trimsBillQty} m</b></span>}
+                </div>
+                {!match && <Btn label="Auto-fill colour meters to match" small color={T.surface} textColor={T.gold} onClick={() => {
+                  const cols = d.colors||[]; if (cols.length===0) return;
+                  const each = +(fabricBillQty / cols.length).toFixed(2);
+                  setD(f => ({...f, colors:f.colors.map(c => ({...c, meters: each}))}));
+                }} />}
+              </div>
+              {match
+                ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.green, marginTop:6 }}>✓ Fabric bill quantity matches colour swatch total.</div>
+                : <div style={{ fontFamily:T.mono, fontSize:11, color:T.orange, marginTop:6 }}>⚠ Mismatch of {Math.abs(diff)} m — fabric bills {diff>0?"exceed":"are short of"} the colour swatch total. Adjust colour meters or the bill, or tap auto-fill.</div>
+              }
+            </div>
+          );
+        })()}
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("photos")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("photos")} style={{ order: secOrder.indexOf("photos"), border: dragKey==="photos"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Shirt Photos & Details">
         <div style={{ display:"flex", gap:10, marginBottom:14, alignItems:"flex-end" }}>
           <Inp label="Photo Note / Detail" value={photoNote} onChange={setPhotoNote} placeholder="e.g. Front view — collar detail" style={{ flex:1 }} />
@@ -2076,6 +2140,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           ))}
         </div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("process")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("process")} style={{ order: secOrder.indexOf("process"), border: dragKey==="process"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Process Assignments (optional — can fill later)">
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:12 }}>Assign a jobber for each process now, or leave blank — it can be set later, or auto-fills when a jobber logs their work.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
@@ -2084,9 +2151,14 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           ))}
         </div>
       </Section>
+      </div>
+      <div draggable onDragStart={()=>setDragKey("note")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("note")} style={{ order: secOrder.indexOf("note"), border: dragKey==="note"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
       <Section title="Common Note / Pattern Instructions">
         <textarea value={d.notes} onChange={e => upd("notes")(e.target.value)} placeholder="What pattern to make, special instructions..." style={{ width:"100%", minHeight:80, background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:10, boxSizing:"border-box", resize:"vertical" }} />
       </Section>
+      </div>
+      </div>
       <div style={{ display:"flex", gap:12, justifyContent:"flex-end" }}>
         <Btn label="Cancel" onClick={onCancel} color={T.surface} textColor={T.steelLt} />
         <Btn label={saving?"Saving…":existing?"Save Changes":"Create Design"} onClick={handleSave} disabled={saving||!d.designNo||(d.supplierBills||[]).filter(b=>b.supplier&&b.qty).length===0} />
@@ -3192,6 +3264,15 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
 
   const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
 
+  async function sendLot(mv) {
+    if (!sel) return;
+    const updated = { ...sel, movements:[...(sel.movements||[]), mv] };
+    setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+    setSel(updated);
+    await dbUpsert("movements", mvToRow(mv, sel.id));
+    recordNotification(currentUser, `${currentUser} sent Design ${sel.designNo} to ${mv.sentTo} (${mv.qty} pcs)`, sel.id);
+    showToast("Sent ✓");
+  }
   async function saveDesign(d) {
     const isNew = creating;
     d = { ...d, supplierBills:(d.supplierBills||[]).map(b => ({ ...b, designNo: b.designNo||d.designNo })) };
@@ -3248,7 +3329,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           </div>
         </div>
         <div style={{ maxWidth:1100, margin:"0 auto", padding:24 }}>
-          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} />
+          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} />
         </div>
         <Toast {...toast} />
       </div>
