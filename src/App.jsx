@@ -1928,6 +1928,18 @@ function ProcessAssignRow({ procName, jobbers, value, onChange, onAddJobber }) {
   );
 }
 
+function FabricBillPhoto({ bill, onPick }) {
+  const ref = useRef();
+  return (
+    <div>
+      <div onClick={() => ref.current && ref.current.click()} style={{ width:56, height:56, borderRadius:6, overflow:"hidden", background:T.bg, border:`1px solid ${T.border}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        {bill.photo ? <img src={bill.photo} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} draggable={false} /> : <span style={{ fontSize:8, color:T.textDim, fontFamily:T.mono, textAlign:"center" }}>Bill<br/>photo</span>}
+      </div>
+      <input ref={ref} type="file" accept="image/*" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+    </div>
+  );
+}
+
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
 function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
