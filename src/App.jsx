@@ -242,6 +242,55 @@ function rowToEnt(r) {
   return { id: r.id, jobber: r.jobber_id||"", date: r.date||"", qtyReceived: r.qty_received||"", qtyDelivered: r.qty_delivered||"", damage: r.damage||"", timeTaken: r.time_taken||"", notes: r.notes||"", status: r.status||"pending" };
 }
 
+// Compress + resize an image file to keep storage small. Returns a data URL (JPEG).
+function compressImage(file, maxDim = 1000, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        try { resolve(canvas.toDataURL("image/jpeg", quality)); }
+        catch(e) { resolve(ev.target.result); }
+      };
+      img.onerror = () => resolve(ev.target.result);
+      img.src = ev.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Print a DOM element as a clean PDF (opens browser print dialog -> Save as PDF)
+function printSection(elementId, title) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const w = window.open("", "_blank");
+  if (!w) { alert("Allow popups to download PDF"); return; }
+  w.document.write(`<html><head><title>${title||"Report"}</title>
+  <style>
+    body{font-family:Arial,sans-serif;padding:24px;color:#111}
+    h1{font-size:18px;margin:0 0 4px} .sub{color:#666;font-size:12px;margin-bottom:16px}
+    table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px}
+    th,td{border:1px solid #ccc;padding:5px 7px;text-align:left}
+    th{background:#f0f0f0}
+    img{max-width:80px;max-height:80px}
+  </style></head><body>
+  <h1>AASHISH APPARELS</h1><div class="sub">${title||""} &middot; ${new Date().toLocaleDateString()}</div>
+  ${el.innerHTML}
+  <script>window.onload=()=>{window.print();}</script>
+  </body></html>`);
+  w.document.close();
+}
+
 function nowStr() {
   const d = new Date();
   return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
@@ -321,14 +370,16 @@ function Section({ title, children, action }) {
   );
 }
 
+function PdfBtn({ targetId, title }) {
+  return <Btn label="⤓ PDF" onClick={() => printSection(targetId, title)} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.gold}44` }} />;
+}
+
 function PhotoUpload({ label, value, onChange, size=60 }) {
   const ref = useRef();
   function handle(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => onChange(ev.target.result);
-    reader.readAsDataURL(file);
+    compressImage(file).then(onChange).catch(() => {});
   }
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
@@ -611,12 +662,10 @@ function ReferencePhotos({ design, onUpdate, role }) {
   function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      onUpdate({ ...design, photos: [...(design.photos||[]), { id:`P${Date.now()}`, src:ev.target.result, note, date:new Date().toISOString().slice(0,10) }] });
+    compressImage(file).then(src => {
+      onUpdate({ ...design, photos: [...(design.photos||[]), { id:`P${Date.now()}`, src, note, date:new Date().toISOString().slice(0,10) }] });
       setNote("");
-    };
-    reader.readAsDataURL(file);
+    }).catch(() => {});
   }
   function removePhoto(id) { onUpdate({ ...design, photos:(design.photos||[]).filter(p => p.id!==id) }); }
   function saveNote(id, n) { onUpdate({ ...design, photos:(design.photos||[]).map(p => p.id===id ? {...p,note:n} : p) }); setEditNote(null); }
@@ -1226,6 +1275,26 @@ function recordActivity(who, action, target, detail) {
   dbUpsert("activity_log", logToRow(entry));
 }
 
+function notifToRow(n) {
+  return { id:n.id, ts:n.ts||"", who:n.who||"", message:n.message||"", design_id:n.designId||"", read_by:n.readBy||[] };
+}
+function rowToNotif(r) {
+  return { id:r.id, ts:r.ts||"", who:r.who||"", message:r.message||"", designId:r.design_id||"", readBy:r.read_by||[] };
+}
+
+function challanToRow(c) {
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+}
+function rowToChallan(r) {
+  return { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+}
+let _notifSink = null;
+function recordNotification(who, message, designId) {
+  const entry = { id:`NOT${Date.now()}${Math.floor(Math.random()*1000)}`, ts:nowStr(), who:who||"", message:message||"", designId:designId||"", readBy:[] };
+  if (_notifSink) _notifSink(entry);
+  dbUpsert("notifications", notifToRow(entry));
+}
+
 function BookingsPanel({ bookings, setBookings, showToast, currentUser }) {
   const [form, setForm] = useState({ customer:"", designNo:"", color:"", sizes:{}, bookingDate:"", deliveryDate:"", notes:"" });
   const [view, setView] = useState("list"); // list | summary
@@ -1437,6 +1506,67 @@ function BarcodePanel({ design, jobbers, onUpdate }) {
   );
 }
 
+// ── Production Flow (combined movement + process chain, date-ordered) ──────────
+function ProductionFlow({ design, jobbers }) {
+  const jname = id => jobbers.find(j => j.id===id)?.name || id || "—";
+  const rows = [];
+  // From Process Register (main + splits)
+  PROCESSES.forEach(p => {
+    const pr = (design.processes||{})[p];
+    if (pr && pr.jobber) {
+      rows.push({ kind:"process", date: pr.recdDate||pr.date||"", process:p, jobber:jname(pr.jobber), from:"", to:"", qty:"", recd:pr.recdDate||"", dlvd:pr.dlvdDate||"", days:daysBetween(pr.recdDate,pr.dlvdDate) });
+    }
+    (pr?.splits||[]).forEach(sp => {
+      if (sp.jobber) rows.push({ kind:"process", date: sp.recdDate||"", process:`${p}${sp.label?(" · "+sp.label):""}`, jobber:jname(sp.jobber), from:"", to:"", qty:"", recd:sp.recdDate||"", dlvd:sp.dlvdDate||"", days:daysBetween(sp.recdDate,sp.dlvdDate) });
+    });
+  });
+  // From Movement Log (hand-offs)
+  (design.movements||[]).forEach(m => {
+    rows.push({ kind:"move", date:m.date||"", process:"Movement", jobber:m.jobber||"", from:m.receivedFrom||"", to:m.sentTo||"", qty:m.qty||"", recd:"", dlvd:"", days:null, remark:m.remark||"" });
+  });
+  // sort by date ascending; blank dates last
+  rows.sort((a,b) => { if(!a.date) return 1; if(!b.date) return -1; return a.date.localeCompare(b.date); });
+
+  return (
+    <div>
+      <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:12 }}>
+        Full journey of Design <span style={{ color:T.gold, fontWeight:700 }}>{design.designNo}</span> — who did each job, in order, with hand-offs.
+      </div>
+      {rows.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono, fontSize:12 }}>No flow data yet. Assign processes and log movements to build the journey.</div>}
+      {rows.length>0 && (
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:"100%" }}>
+            <thead>
+              <tr style={{ background:T.surface }}>
+                {["#","Date","Stage","Jobber","Received From","Sent To","Qty","Recd","Dlvd","Days"].map(h => (
+                  <th key={h} style={{ padding:"8px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r,i) => (
+                <tr key={i} style={{ background:i%2===0?T.card:T.surface, borderLeft:`3px solid ${r.kind==="move"?T.steelLt:T.gold}` }}>
+                  <td style={{ padding:"8px", fontFamily:T.mono, color:T.steelLt, border:`1px solid ${T.border}` }}>{i+1}</td>
+                  <td style={{ padding:"8px", color:T.steelLt, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.date||"—"}</td>
+                  <td style={{ padding:"8px", color:T.white, fontWeight:600, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.process}</td>
+                  <td style={{ padding:"8px", color:T.gold, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.jobber}</td>
+                  <td style={{ padding:"8px", color:T.text, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.from||"—"}</td>
+                  <td style={{ padding:"8px", color:T.text, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.to||"—"}</td>
+                  <td style={{ padding:"8px", fontFamily:T.mono, color:T.text, border:`1px solid ${T.border}`, textAlign:"center" }}>{r.qty||"—"}</td>
+                  <td style={{ padding:"8px", color:T.steelLt, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.recd||"—"}</td>
+                  <td style={{ padding:"8px", color:T.steelLt, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{r.dlvd||"—"}</td>
+                  <td style={{ padding:"8px", fontFamily:T.mono, color:r.days!=null?(r.days>7?T.orange:T.steelLt):T.textDim, border:`1px solid ${T.border}`, textAlign:"center" }}>{r.days!=null?r.days:"—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ marginTop:10, fontFamily:T.mono, fontSize:9, color:T.textDim }}>Gold = process step · Grey = movement/hand-off. Ordered by date.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Design Detail (tabbed) ────────────────────────────────────────────────────
 function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber }) {
   const isAdmin = role === "admin";
@@ -1444,8 +1574,8 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
   const isJobber = role === "jobber";
   // Jobbers can view Job Sheet (job register) and fill sizes
   const DTABS = isJobber
-    ? ["Fill Sizes","Job Sheet","Photos"]
-    : ["Job Sheet","Fill Sizes","Customer Orders","Photos","Movement","Supplier Bills",...(isAdmin?["Process Register","Cost Sheet","MRP","Barcode","Pending Approvals"]:[])];
+    ? ["Fill Sizes","Job Sheet","Flow","Photos"]
+    : ["Job Sheet","Fill Sizes","Flow","Customer Orders","Photos","Movement","Supplier Bills",...(isAdmin?["Process Register","Cost Sheet","MRP","Barcode","Pending Approvals"]:[])];
   const [dt, setDt] = useState(isJobber ? "Fill Sizes" : "Job Sheet");
 
   async function save(updated) {
@@ -1493,6 +1623,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
     const updated = { ...design, movements:[...(design.movements||[]),mv] };
     await dbUpsert("movements", mvToRow(mv, design.id));
     onUpdate(updated);
+    recordNotification(currentUser, `${mv.sentTo?("Sent to "+mv.sentTo):"Movement"} — Design ${design.designNo} (${mv.qty} pcs)`, design.id);
     showToast("Movement logged ✓");
   }
   async function approveEntry(idx) {
@@ -1525,6 +1656,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
     onUpdate(updated);
     await dbUpsert("designs", dToRow(updated));
     recordActivity(currentUser, isLocking?"Confirmed & locked sizes":"Unlocked sizes", `Design ${design.designNo}`, "");
+    if (isLocking) recordNotification(currentUser, `${currentUser} filled & locked sizes for Design ${design.designNo}`, design.id);
     showToast(isLocking ? "Sizes confirmed & locked ✓" : "Unlocked for editing");
   }
   const pending = (design.jobberEntries||[]).filter(e => e.status==="pending");
@@ -1551,14 +1683,15 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
           </button>
         ))}
       </div>
-      {dt==="Job Sheet" && <Section title="Job Register / Job Sheet"><JobSheetView design={design} /></Section>}
+      {dt==="Job Sheet" && <Section title="Job Register / Job Sheet" action={<PdfBtn targetId="rpt-jobsheet" title={`Job Register ${design.designNo}`} />}><div id="rpt-jobsheet"><JobSheetView design={design} /></div></Section>}
+      {dt==="Flow" && <Section title="Production Flow — full journey" action={<PdfBtn targetId="rpt-flow" title={`Production Flow ${design.designNo}`} />}><div id="rpt-flow"><ProductionFlow design={design} jobbers={jobbers} /></div></Section>}
       {dt==="Fill Sizes" && <Section title="Job Register — Fill Cut Sizes"><SizeEditor design={design} onUpdate={save} role={role} onConfirmLock={confirmLock} /></Section>}
       {dt==="Customer Orders" && <Section title="Customer Orders"><CustomerOrders design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Photos" && <Section title="Reference Photos & Shirt Details"><ReferencePhotos design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
       {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} /></Section>}
-      {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code"><ProcessRegister design={design} jobbers={jobbers} onUpdate={updProcess} role={role} /></Section>}
-      {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet"><DesignCostSheet design={design} jobbers={jobbers} /></Section>}
+      {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-proc" title={`Process Register ${design.designNo}`} />}><div id="rpt-proc"><ProcessRegister design={design} jobbers={jobbers} onUpdate={updProcess} role={role} /></div></Section>}
+      {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} /></div></Section>}
       {dt==="MRP" && isAdmin && <Section title="MRP & Product Codes"><MRPPanel design={design} onUpdate={save} /></Section>}
       {dt==="Barcode" && isAdmin && <Section title="Barcode Generator"><BarcodePanel design={design} jobbers={jobbers} onUpdate={save} /></Section>}
       {dt==="Pending Approvals" && isAdmin && <Section title="Pending Approvals"><PendingApprovals design={design} jobbers={jobbers} onApprove={approveEntry} onReject={rejectEntry} /></Section>}
@@ -1622,9 +1755,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   function updManualAvg(k, v) { setD(f => ({ ...f, manualAvg: { ...(f.manualAvg||{}), [k]: v } })); }
   function addPhoto(e) {
     const file = e.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => { setD(f => ({...f, photos:[...(f.photos||[]), {id:`P${Date.now()}`,src:ev.target.result,note:photoNote,date:new Date().toISOString().slice(0,10)}]})); setPhotoNote(""); };
-    reader.readAsDataURL(file);
+    compressImage(file).then(src => { setD(f => ({...f, photos:[...(f.photos||[]), {id:`P${Date.now()}`,src,note:photoNote,date:new Date().toISOString().slice(0,10)}]})); setPhotoNote(""); }).catch(() => {});
   }
   function removePhoto(id) { setD(f => ({...f, photos:(f.photos||[]).filter(p => p.id!==id)})); }
   function assignProc(procName, jobberId) {
@@ -2095,8 +2226,148 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
 }
 
 
+
+// ── Challans (jobber-entered, admin-approved; feeds bills) ─────────────────────
+function ChallansPanel({ jobbers, designs, challans, setChallans, showToast, currentUser, role }) {
+  const isAdmin = role === "admin";
+  const [filterJ, setFilterJ] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const jname = id => jobbers.find(j => j.id===id)?.name || id || "—";
+
+  let list = challans;
+  if (filterJ) list = list.filter(c => c.jobberId===filterJ);
+  if (statusFilter !== "all") list = list.filter(c => c.status===statusFilter);
+  list = [...list].sort((a,b) => (b.date||"").localeCompare(a.date||""));
+
+  async function approve(c) {
+    const u = { ...c, status:"approved" };
+    await dbUpsert("challans", challanToRow(u));
+    setChallans(p => p.map(x => x.id===c.id?u:x));
+    recordActivity(currentUser, "Approved challan", `Design ${c.designNo}`, `${jname(c.jobberId)} · ${c.qty} pcs`);
+    showToast("Challan approved ✓");
+  }
+  async function reject(c) {
+    const u = { ...c, status:"rejected" };
+    await dbUpsert("challans", challanToRow(u));
+    setChallans(p => p.map(x => x.id===c.id?u:x));
+    showToast("Challan rejected");
+  }
+  async function remove(c) {
+    await dbDelete("challans", c.id);
+    setChallans(p => p.filter(x => x.id!==c.id));
+    showToast("Challan deleted");
+  }
+
+  const pendingCount = challans.filter(c => c.status==="pending").length;
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+        <Btn label="+ New Challan" onClick={() => setShowForm(true)} />
+        {isAdmin && pendingCount>0 && <Badge label={`${pendingCount} pending approval`} color={T.orange} />}
+        <select value={filterJ} onChange={e => setFilterJ(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
+          <option value="">All jobbers</option>
+          {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+        </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
+          <option value="all">All status</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </div>
+
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+          <thead>
+            <tr style={{ background:T.surface }}>
+              {["Date","Challan No","Jobber","Design","Process","Qty","Rate","Amount","Photo","Status",""].map(h => (
+                <th key={h} style={{ padding:"8px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((c,i) => (
+              <tr key={c.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`3px solid ${monthColor(c.date)}` }}>
+                <td style={{ padding:"8px", color:T.steelLt, whiteSpace:"nowrap" }}>{c.date||"—"}</td>
+                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono }}>{c.challanNo||"—"}</td>
+                <td style={{ padding:"8px", color:T.white, fontWeight:600, whiteSpace:"nowrap" }}>{jname(c.jobberId)}</td>
+                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono }}>{c.designNo}</td>
+                <td style={{ padding:"8px", color:T.steelLt, whiteSpace:"nowrap" }}>{c.process||"—"}</td>
+                <td style={{ padding:"8px", color:T.text, fontFamily:T.mono, textAlign:"center" }}>{c.qty}</td>
+                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono }}>Rs.{c.rate}</td>
+                <td style={{ padding:"8px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{c.amount}</td>
+                <td style={{ padding:"8px" }}>{c.photo ? <img src={c.photo} alt="" onClick={()=>window.open().document.write(`<img src="${c.photo}" style="max-width:100%">`)} style={{ width:28, height:28, borderRadius:4, objectFit:"cover", cursor:"pointer" }} draggable={false} onContextMenu={e=>e.preventDefault()} /> : <span style={{ color:T.textDim }}>—</span>}</td>
+                <td style={{ padding:"8px" }}>
+                  <Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} />
+                  {c.billed && <Badge label="billed" color={T.steelLt} />}
+                </td>
+                <td style={{ padding:"8px", whiteSpace:"nowrap" }}>
+                  {isAdmin && c.status==="pending" && <><Btn label="✓" onClick={()=>approve(c)} color={T.green} textColor="#fff" small /> <Btn label="✕" onClick={()=>reject(c)} color={T.red+"22"} textColor={T.red} small /></>}
+                  {isAdmin && c.status!=="pending" && !c.billed && <Btn label="Del" onClick={()=>remove(c)} color={T.red+"22"} textColor={T.red} small />}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {list.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No challans.</div>}
+
+      {showForm && <ChallanForm jobbers={jobbers} designs={designs} role={role} currentUser={currentUser} onClose={()=>setShowForm(false)} onSave={async (c) => {
+        await dbUpsert("challans", challanToRow(c));
+        setChallans(p => [c,...p]);
+        recordActivity(currentUser, "Added challan", `Design ${c.designNo}`, `${jname(c.jobberId)} · ${c.qty} pcs`);
+        recordNotification(currentUser, `New challan — Design ${c.designNo} by ${jname(c.jobberId)} (${c.qty} pcs)${role!=="admin"?" — needs approval":""}`, "");
+        showToast(role==="admin" ? "Challan added ✓" : "Challan submitted for approval ✓");
+        setShowForm(false);
+      }} />}
+    </div>
+  );
+}
+
+function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fixedJobber }) {
+  const isAdmin = role === "admin";
+  const [form, setForm] = useState({ jobberId: fixedJobber||"", designNo:"", process:"", qty:"", rate:"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"" });
+  const upd = k => v => setForm(f => ({ ...f, [k]:v }));
+  const amount = (+form.qty||0) * (+form.rate||0);
+  function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => upd("photo")(src)).catch(()=>{}); }
+  const photoRef = useRef();
+  function save() {
+    if (!form.jobberId || !form.designNo || !form.qty) return;
+    onSave({ ...form, id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status: isAdmin?"approved":"pending", billed:false, createdBy:currentUser, createdAtStr:nowStr() });
+  }
+  return (
+    <Modal title="New Challan" onClose={onClose}>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+        <Inp label="Jobber *" value={form.jobberId} onChange={upd("jobberId")} options={jobbers.filter(j=>j.role==="jobber").map(j=>j.id)} />
+        <Inp label="Design No *" value={form.designNo} onChange={upd("designNo")} options={designs.map(d=>d.designNo)} />
+        <Inp label="Process" value={form.process} onChange={upd("process")} options={PROCESSES} />
+        <Inp label="Date" type="date" value={form.date} onChange={upd("date")} />
+        <Inp label="Quantity *" type="number" value={form.qty} onChange={upd("qty")} />
+        <Inp label="Rate (Rs.)" type="number" value={form.rate} onChange={upd("rate")} />
+        <Inp label="Challan No" value={form.challanNo} onChange={upd("challanNo")} />
+        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Amount (auto)</label>
+          <div style={{ fontFamily:T.mono, fontSize:16, color:T.gold, fontWeight:700, padding:"6px 0" }}>Rs.{amount}</div>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16 }}>
+        <Btn label={form.photo?"Change Photo":"+ Challan Photo (optional)"} onClick={()=>photoRef.current.click()} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.border}` }} />
+        {form.photo && <img src={form.photo} alt="" style={{ width:40, height:40, borderRadius:4, objectFit:"cover" }} />}
+        <input ref={photoRef} type="file" accept="image/*" style={{ display:"none" }} onChange={handlePhoto} />
+      </div>
+      {!isAdmin && <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginBottom:12 }}>This challan will be submitted for admin approval.</div>}
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Challan" onClick={save} disabled={!form.jobberId||!form.designNo||!form.qty} />
+      </div>
+    </Modal>
+  );
+}
+
 // ── Bills + Payments + Dual Ledger ────────────────────────────────────────────
-function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments, showToast, currentUser }) {
+function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments, challans, setChallans, showToast, currentUser }) {
   const [selJ, setSelJ] = useState("");
   const [ledgerView, setLedgerView] = useState("bank"); // bank | cash | combined
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
@@ -2247,7 +2518,17 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             </tbody>
           </table>
 
-          {showBillForm && <BillForm jobber={j} designs={designs} selJ={selJ} suggestForDesign={suggestForDesign} onClose={() => setShowBillForm(false)} onSave={async (bill) => { await dbUpsert("bills", billToRow(bill)); setBills(p => [bill,...p]); recordActivity(currentUser, "Added bill", `Jobber ${j?.name||""}`, `Bill ${bill.billNo} Rs.${bill.total}`); showToast("Bill saved ✓"); setShowBillForm(false); }} currentUser={currentUser} />}
+          {showBillForm && <BillForm jobber={j} designs={designs} selJ={selJ} suggestForDesign={suggestForDesign} challans={(challans||[]).filter(c => c.jobberId===selJ && c.status==="approved" && !c.billed)} onClose={() => setShowBillForm(false)} onSave={async (bill, usedChallanIds) => {
+        await dbUpsert("bills", billToRow(bill));
+        setBills(p => [bill,...p]);
+        if (usedChallanIds && usedChallanIds.length) {
+          const upd = (challans||[]).filter(c => usedChallanIds.includes(c.id)).map(c => ({ ...c, billed:true, billId:bill.id }));
+          for (const c of upd) { await dbUpsert("challans", challanToRow(c)); }
+          setChallans(p => p.map(c => usedChallanIds.includes(c.id) ? { ...c, billed:true, billId:bill.id } : c));
+        }
+        recordActivity(currentUser, "Added bill", `Jobber ${j?.name||""}`, `Bill ${bill.billNo} Rs.${bill.total}`);
+        showToast("Bill saved ✓"); setShowBillForm(false);
+      }} currentUser={currentUser} />}
           {showPayForm && <PaymentForm jobber={j} selJ={selJ} onClose={() => setShowPayForm(false)} onSave={async (pay) => { await dbUpsert("payments", payToRow(pay)); setPayments(p => [pay,...p]); recordActivity(currentUser, "Recorded payment", `Jobber ${j?.name||""}`, `Rs.${pay.amount} (${pay.channel})`); showToast("Payment recorded ✓"); setShowPayForm(false); }} currentUser={currentUser} />}
         </>
       )}
@@ -2256,10 +2537,16 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
 }
 
 // ── Bill Form ─────────────────────────────────────────────────────────────────
-function BillForm({ jobber, designs, selJ, suggestForDesign, onClose, onSave, currentUser }) {
+function BillForm({ jobber, designs, selJ, suggestForDesign, challans = [], onClose, onSave, currentUser }) {
   const [billNo, setBillNo] = useState("");
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0,10));
   const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]);
+  const [selChallans, setSelChallans] = useState([]);
+  function toggleChallan(id) { setSelChallans(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id]); }
+  function selectAllChallans() { setSelChallans(challans.map(c=>c.id)); }
+  function clearChallans() { setSelChallans([]); }
+  // build lines from selected challans (in addition to manual lines)
+  const challanLines = challans.filter(c => selChallans.includes(c.id)).map(c => ({ id:c.id, designNo:c.designNo, qty:c.qty, rate:c.rate, amount:c.amount, fromChallan:true }));
   const [gstPct, setGstPct] = useState("5");
   const [hasGst, setHasGst] = useState(true);
   const [roundOff, setRoundOff] = useState(true);
@@ -2276,7 +2563,7 @@ function BillForm({ jobber, designs, selJ, suggestForDesign, onClose, onSave, cu
       return nx;
     }));
   }
-  const gross = lines.reduce((a,l) => a+(+l.amount||0), 0);
+  const gross = [...challanLines, ...lines].reduce((a,l) => a+(+l.amount||0), 0);
   const gstAmt = hasGst ? gross * (+gstPct||0) / 100 : 0;
   let total = gross + gstAmt;
   let roundDiff = 0;
@@ -2284,7 +2571,8 @@ function BillForm({ jobber, designs, selJ, suggestForDesign, onClose, onSave, cu
 
   function save() {
     if (!billNo) return;
-    onSave({ id:`BILL${Date.now()}`, jobberId:selJ, billNo, billDate, lines, gross, gstPct:+gstPct, gstAmt, roundOff:roundDiff, total, hasGst, createdBy:currentUser, createdAtStr:nowStr() });
+    const allLines = [...challanLines, ...lines.filter(l => l.designNo || l.amount)];
+    onSave({ id:`BILL${Date.now()}`, jobberId:selJ, billNo, billDate, lines:allLines, gross, gstPct:+gstPct, gstAmt, roundOff:roundDiff, total, hasGst, createdBy:currentUser, createdAtStr:nowStr() }, selChallans);
   }
 
   return (
@@ -2293,7 +2581,29 @@ function BillForm({ jobber, designs, selJ, suggestForDesign, onClose, onSave, cu
         <Inp label="Bill No *" value={billNo} onChange={setBillNo} style={{ minWidth:120 }} />
         <Inp label="Bill Date" type="date" value={billDate} onChange={setBillDate} style={{ minWidth:150 }} />
       </div>
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:8, textTransform:"uppercase" }}>Designs in this bill</div>
+      {challans.length > 0 && (
+        <div style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:14 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+            <span style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase" }}>Pull from approved challans ({challans.length})</span>
+            <div style={{ display:"flex", gap:6 }}>
+              <Btn label="Select all" onClick={selectAllChallans} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+              <Btn label="Clear" onClick={clearChallans} small color={T.surface} textColor={T.steelLt} style={{ border:`1px solid ${T.border}` }} />
+            </div>
+          </div>
+          <div style={{ maxHeight:160, overflow:"auto" }}>
+            {challans.map(c => (
+              <label key={c.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", cursor:"pointer", fontSize:12, color:T.text }}>
+                <input type="checkbox" checked={selChallans.includes(c.id)} onChange={()=>toggleChallan(c.id)} style={{ accentColor:T.gold, width:14, height:14 }} />
+                <span style={{ fontFamily:T.mono, color:T.steelLt }}>{c.date}</span>
+                <span style={{ color:T.gold, fontFamily:T.mono }}>D{c.designNo}</span>
+                <span>{c.process}</span>
+                <span style={{ fontFamily:T.mono, marginLeft:"auto" }}>{c.qty} × Rs.{c.rate} = <b style={{color:T.white}}>Rs.{c.amount}</b></span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:8, textTransform:"uppercase" }}>Designs in this bill (manual entry — for handwritten challans)</div>
       {lines.map(l => (
         <div key={l.id} style={{ display:"flex", gap:8, marginBottom:8, alignItems:"flex-end", flexWrap:"wrap" }}>
           <Inp label="Design No" value={l.designNo} onChange={v => updLine(l.id,"designNo",v)} options={designs.map(d=>d.designNo)} style={{ flex:2, minWidth:110 }} />
@@ -2430,8 +2740,9 @@ function JobberLedger({ designs, jobbers }) {
 }
 
 // ── Jobber Panel ──────────────────────────────────────────────────────────────
-function JobberPanel({ user, designs, setDesigns, people, onLogout }) {
+function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, onLogout }) {
   const [sel, setSel] = useState(null);
+  const [showChallan, setShowChallan] = useState(false);
   const [toast, setToast] = useState({ msg:"", type:"" });
   function showToast(msg, type="success") { setToast({msg,type}); setTimeout(() => setToast({msg:"",type:""}), 3000); }
   const myDesigns = designs.filter(d => PROCESSES.some(p => d.processes?.[p]?.jobber===user.id));
@@ -2478,7 +2789,23 @@ function JobberPanel({ user, designs, setDesigns, people, onLogout }) {
             </div>
           ) : null;
         })()}
-        <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:16, textTransform:"uppercase" }}>Your Assigned Designs — tap to view job register & fill sizes</div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+          <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase" }}>Your Assigned Designs — tap to fill sizes</span>
+          <Btn label="+ New Challan" onClick={() => setShowChallan(true)} />
+        </div>
+        {(challans||[]).filter(c => c.jobberId===user.id).length > 0 && (
+          <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, padding:14, marginBottom:16 }}>
+            <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Your Challans</div>
+            {(challans||[]).filter(c => c.jobberId===user.id).slice(0,10).map(c => (
+              <div key={c.id} style={{ display:"flex", gap:10, alignItems:"center", padding:"6px 0", fontSize:12, borderBottom:`1px solid ${T.border}` }}>
+                <span style={{ fontFamily:T.mono, color:T.steelLt }}>{c.date}</span>
+                <span style={{ color:T.gold, fontFamily:T.mono }}>D{c.designNo}</span>
+                <span style={{ color:T.text }}>{c.qty} pcs</span>
+                <span style={{ marginLeft:"auto" }}><Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} /></span>
+              </div>
+            ))}
+          </div>
+        )}
         {myDesigns.length === 0 && <div style={{ color:T.textDim, textAlign:"center", padding:60, fontFamily:T.mono }}>No designs assigned yet.</div>}
         {myDesigns.map(d => {
           const myProcs = PROCESSES.filter(p => d.processes?.[p]?.jobber===user.id);
@@ -2512,6 +2839,38 @@ function JobberPanel({ user, designs, setDesigns, people, onLogout }) {
   );
 }
 
+// ── Notification Bell ─────────────────────────────────────────────────────────
+function NotificationBell({ notifications, currentUser, onOpenDesign, onMarkRead }) {
+  const [open, setOpen] = useState(false);
+  const unread = (notifications||[]).filter(n => !(n.readBy||[]).includes(currentUser));
+  return (
+    <div style={{ position:"relative" }}>
+      <button onClick={() => setOpen(o => !o)} style={{ background:"none", border:"none", cursor:"pointer", position:"relative", padding:"6px 10px", fontSize:18 }}>
+        🔔
+        {unread.length > 0 && <span style={{ position:"absolute", top:0, right:2, background:T.red, color:"#fff", borderRadius:10, fontSize:9, fontWeight:700, padding:"1px 5px", fontFamily:T.mono }}>{unread.length}</span>}
+      </button>
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"100%", marginTop:4, width:"min(340px,90vw)", maxHeight:"60vh", overflow:"auto", background:T.card, border:`1px solid ${T.border}`, borderRadius:10, boxShadow:"0 8px 30px #0009", zIndex:500 }}>
+          <div style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:11, color:T.gold, fontWeight:700, textTransform:"uppercase" }}>Notifications {unread.length>0?`(${unread.length} new)`:""}</div>
+          {(notifications||[]).length === 0 && <div style={{ padding:24, textAlign:"center", color:T.textDim, fontFamily:T.mono, fontSize:12 }}>No notifications yet.</div>}
+          {(notifications||[]).slice(0,40).map(n => {
+            const isUnread = !(n.readBy||[]).includes(currentUser);
+            return (
+              <div key={n.id} onClick={() => { onMarkRead(n); if (n.designId) { onOpenDesign(n.designId); setOpen(false); } }} style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, cursor:"pointer", background:isUnread?T.surface:"transparent", display:"flex", gap:8, alignItems:"flex-start" }}>
+                {isUnread && <span style={{ width:8, height:8, borderRadius:"50%", background:T.gold, marginTop:5, flexShrink:0 }} />}
+                <div style={{ flex:1 }}>
+                  <div style={{ color:isUnread?T.white:T.steelLt, fontSize:12, fontWeight:isUnread?600:400 }}>{n.message}</div>
+                  <div style={{ color:T.textDim, fontSize:10, fontFamily:T.mono, marginTop:2 }}>{n.ts}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Home Dashboard ────────────────────────────────────────────────────────────
 function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, onGo, isAdmin }) {
   const inProgress = designs.filter(d => d.status==="In Progress").length;
@@ -2531,6 +2890,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
     ["Designs", "All designs & status", "Designs", T.gold],
     ["+ New Design", "Create a new design", "__new__", T.green],
     ["Bookings", "Orders & demand planning", "Bookings", T.steelLt],
+    ["Challans", "Jobber challans & approval", "Challans", T.orange],
     ["Bills & Ledger", "Jobber bills & payments", "Bills & Ledger", T.gold],
     ["Fabric Purchases", "Fabric bills & monthly totals", "Fabric Purchases", T.steelLt],
     ["People", "Jobbers & team members", "People", T.steelLt],
@@ -2540,6 +2900,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
     ["Designs", "All designs & status", "Designs", T.gold],
     ["+ New Design", "Create a new design", "__new__", T.green],
     ["Bookings", "Orders & demand planning", "Bookings", T.steelLt],
+    ["Challans", "Jobber challans", "Challans", T.orange],
     ["Search", "Find any design fast", "Search", T.gold],
   ];
 
@@ -2578,7 +2939,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
 }
 
 // ── Team / Admin shared design workspace ──────────────────────────────────────
-function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, onLogout }) {
+function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, onLogout }) {
   const isAdmin = role === "admin";
   const [tab, setTab] = useState("Home");
   const [sel, setSel] = useState(null);
@@ -2603,7 +2964,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return j;
   }
 
-  const TABS = isAdmin ? ["Home","Designs","Bookings","People","Bills & Ledger","Fabric Purchases","Activity Log","Search"] : ["Home","Designs","Bookings","Search"];
+  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
 
   async function saveDesign(d) {
     const isNew = creating;
@@ -2674,7 +3035,10 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
             <button key={t} onClick={() => setTab(t)} style={{ background:"none", border:"none", cursor:"pointer", padding:"18px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, color:tab===t?T.gold:T.steelLt, borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent", marginBottom:-2, textTransform:"uppercase" }}>{t}</button>
           ))}
         </div>
-        <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <NotificationBell notifications={notifications} currentUser={currentUser} onOpenDesign={openDesignById} onMarkRead={markNotifRead} />
+          <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
+        </div>
       </div>
       <div style={{ maxWidth:1200, margin:"0 auto", padding:24 }}>
         {tab==="Home" && (
@@ -2755,11 +3119,12 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
             </div>
           </div>
         )}
-        {tab==="Bookings" && <Section title="Bookings — Order Planning"><BookingsPanel bookings={bookings} setBookings={setBookings} showToast={showToast} currentUser={currentUser} /></Section>}
+        {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} showToast={showToast} currentUser={currentUser} /></div></Section>}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
-        {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} showToast={showToast} currentUser={currentUser} /></Section>}
-        {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals"><FabricPurchases designs={designs} /></Section>}
-        {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes"><ActivityLog log={activityLog} /></Section>}
+        {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
+        {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} /></Section>}
+        {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals" action={<PdfBtn targetId="rpt-fabric" title="Fabric Purchases" />}><div id="rpt-fabric"><FabricPurchases designs={designs} /></div></Section>}
+        {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
         {tab==="Search" && (
           <div>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by Design No, Brand or Style..." style={{ background:T.card, border:`2px solid ${T.gold}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:15, padding:"12px 18px", width:"100%", boxSizing:"border-box", outline:"none", marginBottom:20 }} />
@@ -2881,13 +3246,15 @@ export default function App() {
   const [bills, setBills] = useState([]);
   const [payments, setPayments] = useState([]);
   const [activityLog, setActivityLog] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [challans, setChallans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadInfo, setLoadInfo] = useState("");
 
   async function loadAll() {
     try {
-      const [pRows, dRows, mvRows, entRows, bRows, billRows, payRows, logRows] = await Promise.all([
-        dbSelect("jobbers"), dbSelect("designs"), dbSelect("movements"), dbSelect("jobber_entries"), dbSelect("bookings"), dbSelect("bills"), dbSelect("payments"), dbSelect("activity_log")
+      const [pRows, dRows, mvRows, entRows, bRows, billRows, payRows, logRows, notifRows, chRows] = await Promise.all([
+        dbSelect("jobbers"), dbSelect("designs"), dbSelect("movements"), dbSelect("jobber_entries"), dbSelect("bookings"), dbSelect("bills"), dbSelect("payments"), dbSelect("activity_log"), dbSelect("notifications"), dbSelect("challans")
       ]);
       const ppl = (pRows||[]).map(rowToJ);
       setPeople(ppl);
@@ -2901,6 +3268,8 @@ export default function App() {
       setBills((billRows||[]).map(rowToBill));
       setPayments((payRows||[]).map(rowToPay));
       setActivityLog((logRows||[]).map(rowToLog).sort((a,b)=> (b.ts||"").localeCompare(a.ts||"")));
+      setNotifications((notifRows||[]).map(rowToNotif).sort((a,b)=> (b.ts||"").localeCompare(a.ts||"")));
+      setChallans((chRows||[]).map(rowToChallan));
       setLoadInfo(`Loaded ${ppl.length} people, ${(dRows||[]).length} designs`);
     } catch(e) {
       setLoadInfo("Load error: " + (e?.message||e));
@@ -2908,14 +3277,14 @@ export default function App() {
     setLoading(false);
   }
 
-  useEffect(() => { _logSink = (entry) => setActivityLog(prev => [entry, ...prev]); return () => { _logSink = null; }; }, []);
+  useEffect(() => { _logSink = (entry) => setActivityLog(prev => [entry, ...prev]); _notifSink = (entry) => setNotifications(prev => [entry, ...prev]); return () => { _logSink = null; _notifSink = null; }; }, []);
   useEffect(() => { loadAll(); }, []);
 
   if (loading) return <Loader />;
   if (!auth) return <Login people={people} loadInfo={loadInfo} onRefresh={loadAll} onAdmin={name => setAuth({role:"admin", name})} onUser={u => setAuth({role:u.role, user:u, name:u.name})} />;
 
   if (auth.role === "jobber") {
-    return <JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} onLogout={() => setAuth(null)} />;
+    return <JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} onLogout={() => setAuth(null)} />;
   }
   // admin or team
   return (
@@ -2928,6 +3297,8 @@ export default function App() {
       bills={bills} setBills={setBills}
       payments={payments} setPayments={setPayments}
       activityLog={activityLog}
+      notifications={notifications} setNotifications={setNotifications}
+      challans={challans} setChallans={setChallans}
       onLogout={() => setAuth(null)}
     />
   );
