@@ -508,156 +508,38 @@ function JobSheetView({ design }) {
           </thead>
           <tbody>
             {(design.colors||[]).map((c,i) => {
-              const rt = sizes.reduce((a,s) => a + (+(c.sizes||{})[s]||0), 0);
+              const rt = sizes.reduce((a,s) => a+(+(c.sizes||{})[s]||0), 0);
               return (
                 <tr key={c.id||i} style={{ background:i%2===0?T.card:T.surface }}>
                   <td style={{ padding:"4px 6px", border:`1px solid ${T.border}` }}>
-                    <div onContextMenu={e => e.preventDefault()} style={{ width:44, height:44, borderRadius:4, overflow:"hidden", background:T.bg, border:`1px solid ${T.border}` }}>
-                      {c.swatch
-                        ? <img src={c.swatch} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", pointerEvents:"none" }} draggable={false} />
-                        : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:T.textDim, fontSize:8, fontFamily:T.mono }}>No img</div>
-                      }
+                    <div onContextMenu={e=>e.preventDefault()} style={{ width:36, height:36, borderRadius:4, overflow:"hidden", background:T.bg, border:`1px solid ${T.border}` }}>
+                      {c.swatch ? <img src={c.swatch} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", pointerEvents:"none" }} draggable={false} /> : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:T.textDim, fontSize:7, fontFamily:T.mono }}>—</div>}
                     </div>
                   </td>
-                  <td style={{ padding:"8px 10px", color:T.white, fontWeight:600, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{c.colorName}</td>
-                  <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{c.meters}</td>
-                  {sizes.map(s => <td key={s} style={{ padding:"8px 6px", color:T.text, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{(c.sizes||{})[s]||0}</td>)}
-                  <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{rt}</td>
-                  <td style={{ padding:"8px", color:T.steelLt, border:`1px solid ${T.border}` }}>{c.balance}</td>
+                  <td style={{ padding:"6px 8px", color:T.white, fontWeight:600, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{c.colorName}{c.colorNo?` (${c.colorNo})`:""}</td>
+                  <td style={{ padding:"6px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{c.meters}</td>
+                  {sizes.map(s => <td key={s} style={{ padding:"6px", color:T.text, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{(c.sizes||{})[s]||0}</td>)}
+                  <td style={{ padding:"6px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{rt}</td>
+                  <td style={{ padding:"6px 8px", color:T.steelLt, border:`1px solid ${T.border}` }}>{c.balance||""}</td>
                 </tr>
               );
             })}
             <tr style={{ background:T.bg }}>
-              <td colSpan={2} style={{ padding:"10px", fontFamily:T.mono, fontWeight:700, color:T.gold, border:`1px solid ${T.border}` }}>GRAND TOTAL</td>
-              <td style={{ padding:"10px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{(design.colors||[]).reduce((a,c) => a+(+c.meters||0), 0)}</td>
-              {sizes.map(s => <td key={s} style={{ padding:"10px", fontFamily:T.mono, fontWeight:700, color:T.white, border:`1px solid ${T.border}`, textAlign:"center" }}>{(design.colors||[]).reduce((a,c) => a+(+(c.sizes||{})[s]||0), 0)}</td>)}
-              <td style={{ padding:"10px", fontFamily:T.mono, fontWeight:900, color:T.gold, fontSize:14, border:`1px solid ${T.border}`, textAlign:"center" }}>{totalPcs}</td>
+              <td colSpan={2} style={{ padding:"8px", fontFamily:T.mono, fontWeight:700, color:T.gold, border:`1px solid ${T.border}` }}>TOTAL</td>
+              <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{totalMeters(design)}</td>
+              {sizes.map(s => <td key={s} style={{ padding:"8px", fontFamily:T.mono, fontWeight:700, color:T.white, border:`1px solid ${T.border}`, textAlign:"center" }}>{(design.colors||[]).reduce((a,c)=>a+(+(c.sizes||{})[s]||0),0)}</td>)}
+              <td style={{ padding:"8px", fontFamily:T.mono, fontWeight:900, color:T.gold, border:`1px solid ${T.border}`, textAlign:"center" }}>{totalPcs}</td>
               <td style={{ border:`1px solid ${T.border}` }} />
             </tr>
           </tbody>
         </table>
       </div>
-      {design.notes && (
-        <div style={{ background:T.surface, borderRadius:8, padding:12, borderLeft:`3px solid ${T.gold}`, marginBottom:12 }}>
-          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4 }}>COMMON REMARK</div>
-          <div style={{ color:T.text }}>{design.notes}</div>
-        </div>
-      )}
-      <div style={{ display:"flex", gap:20, flexWrap:"wrap", fontFamily:T.mono, fontSize:10, color:T.textDim, marginTop:8 }}>
-        {design.createdBy && <span>Created by {design.createdBy} · {design.createdAtStr}</span>}
-        {design.editedBy && <span>Last edited by {design.editedBy} · {design.editedAtStr}</span>}
-      </div>
+      {design.notes && <div style={{ background:T.surface, borderRadius:8, padding:12, fontSize:12, color:T.text }}><span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:10 }}>COMMON REMARK: </span>{design.notes}</div>}
     </div>
   );
 }
 
-// ── Average display block (auto + manual) ─────────────────────────────────────
-function AveragesBlock({ design }) {
-  const ma = design.manualAvg || {};
-  const items = [
-    ["Cost Avg (total ÷ pcs)", fabricAverage(design)||"—", T.gold],
-    ["Net Avg (less sample)", fabricAverageNet(design)||"—", T.green],
-    ["Avg S–XXL", ma.smxxl||"—", T.steelLt],
-    ["Avg 3XL–5XL", ma.x3to5||"—", T.steelLt],
-    [(ma.bigLabel||"6XL+"), ma.big||"—", T.steelLt],
-    ["Drawing Avg", design.drawingAvg||"—", T.steelLt],
-  ];
-  return (
-    <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:6 }}>
-      {items.map(([l,v,c]) => (
-        <div key={l} style={{ background:T.surface, borderRadius:8, padding:"10px 14px", borderLeft:`3px solid ${c}` }}>
-          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>{l}</div>
-          <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:c }}>{v}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Size & Color editor — Job-Register style, with Confirm & Lock ─────────────
-function LangToggle({ lang, setLang }) {
-  const opts = [["en","EN"],["hi","हिं"],["gu","ગુ"]];
-  return (
-    <div style={{ display:"flex", gap:2, background:T.surface, borderRadius:6, padding:2 }}>
-      {opts.map(([code,label]) => (
-        <button key={code} onClick={() => setLang(code)} style={{ background:lang===code?T.gold:"none", color:lang===code?T.bg:T.steelLt, border:"none", borderRadius:4, padding:"4px 8px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>{label}</button>
-      ))}
-    </div>
-  );
-}
-
-// ── Translations for jobber-facing labels (EN / Hindi / Gujarati) ─────────────
-const TRANSLATIONS = {
-  "Send To Next": { hi:"आगे भेजें", gu:"આગળ મોકલો" },
-  "Who are you sending this lot to?": { hi:"यह लॉट किसको भेज रहे हैं?", gu:"આ લોટ કોને મોકલો છો?" },
-  "Send To": { hi:"भेजें", gu:"મોકલો" },
-  "select": { hi:"चुनें", gu:"પસંદ કરો" },
-  "Office / Admin": { hi:"ऑफिस / एडमिन", gu:"ઓફિસ / એડમિન" },
-  "Quantity (pieces)": { hi:"मात्रा (पीस)", gu:"જથ્થો (પીસ)" },
-  "Note (optional)": { hi:"नोट (वैकल्पिक)", gu:"નોંધ (વૈકલ્પિક)" },
-  "e.g. half stitched": { hi:"जैसे आधा सिला", gu:"દા.ત. અડધું સીવેલું" },
-  "Cancel": { hi:"रद्द करें", gu:"રદ કરો" },
-  "Send": { hi:"भेजें", gu:"મોકલો" },
-  "Fill Sizes": { hi:"साइज़ भरें", gu:"સાઇઝ ભરો" },
-  "Job Sheet": { hi:"जॉब शीट", gu:"જોબ શીટ" },
-  "Flow": { hi:"प्रोसेस फ्लो", gu:"પ્રોસેસ ફ્લો" },
-  "Photos": { hi:"फोटो", gu:"ફોટા" },
-  "Confirm & Lock": { hi:"पक्का करें और लॉक करें", gu:"કન્ફર્મ અને લોક કરો" },
-  "+ New Challan": { hi:"+ नया चालान", gu:"+ નવું ચલણ" },
-  "Your Challans": { hi:"आपके चालान", gu:"તમારા ચલણ" },
-  "Logout": { hi:"लॉग आउट", gu:"લોગ આઉટ" },
-  "Quantity": { hi:"मात्रा", gu:"જથ્થો" },
-};
-function makeL(lang) {
-  return (txt) => {
-    if (lang === "en" || !TRANSLATIONS[txt]) return txt;
-    return TRANSLATIONS[txt][lang] || txt;
-  };
-}
-
-// ── Send-To modal (jobber passes lot to next jobber or office) ────────────────
-function SendToModal({ design, people, fromJobber, onClose, onSend, L }) {
-  const jobbers = people.filter(p => p.role==="jobber" && p.id!==fromJobber?.id);
-  const [toId, setToId] = useState("");
-  const [qty, setQty] = useState("");
-  const [remark, setRemark] = useState("");
-  const isOffice = toId === "__office__";
-  function send() {
-    if (!toId || !qty) return;
-    const toName = isOffice ? "Office / Admin" : (people.find(p=>p.id===toId)?.name || "");
-    onSend({
-      id:`MV${Date.now()}`, date:new Date().toISOString().slice(0,10),
-      jobber: fromJobber?.name||"", sentTo: toName, sentToId: isOffice?"":toId,
-      receivedFrom: fromJobber?.name||"", qty:+qty, remark, status:"sent"
-    });
-  }
-  return (
-    <Modal title={L("Send To Next")} onClose={onClose}>
-      <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:12 }}>{L("Who are you sending this lot to?")}</div>
-      <div style={{ marginBottom:12 }}>
-        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{L("Send To")}</div>
-        <select value={toId} onChange={e=>setToId(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"10px 12px", fontSize:14, width:"100%" }}>
-          <option value="">— {L("select")} —</option>
-          <option value="__office__">🏢 {L("Office / Admin")}</option>
-          {jobbers.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
-        </select>
-      </div>
-      <div style={{ marginBottom:12 }}>
-        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{L("Quantity (pieces)")}</div>
-        <input type="number" value={qty} onChange={e=>setQty(e.target.value)} placeholder="0" style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"10px 12px", fontSize:16, width:"100%", boxSizing:"border-box" }} />
-      </div>
-      <div style={{ marginBottom:16 }}>
-        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>{L("Note (optional)")}</div>
-        <input value={remark} onChange={e=>setRemark(e.target.value)} placeholder={L("e.g. half stitched")} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"10px 12px", fontSize:14, width:"100%", boxSizing:"border-box" }} />
-      </div>
-      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-        <Btn label={L("Cancel")} onClick={onClose} color={T.surface} textColor={T.steelLt} />
-        <Btn label={L("Send")} onClick={send} disabled={!toId||!qty} />
-      </div>
-    </Modal>
-  );
-}
-
+// ── Size Editor (Job Register — fill cut sizes, samples, dispatch) ────────────
 function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendLot, people = [], currentJobber }) {
   const [showSend, setShowSend] = useState(false);
   const [detailed, setDetailed] = useState(false);
@@ -666,36 +548,25 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
   const locked = !!design.locked;
   const canEdit = !locked;
   function updColor(id, k, v) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c,[k]:v} : c) }); }
-  // sizes{} holds TOTAL; samples{} holds sample pcs; dispatch = total - sample
-  function updSize(id, s, v) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c, sizes:{...c.sizes,[s]:v}} : c) }); }
-  function updSample(id, s, v) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c, samples:{...(c.samples||{}),[s]:v}} : c) }); }
   function setNotes(v) { if (!canEdit) return; onUpdate({ ...design, notes: v }); }
   function addSampleFabric(id) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c, sampleFabric:[...(c.sampleFabric||[]), {meters:"", date:new Date().toISOString().slice(0,10)}]} : c) }); }
   function updSampleFabric(id, idx, k, v) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c, sampleFabric:(c.sampleFabric||[]).map((sf,j)=>j===idx?{...sf,[k]:v}:sf)} : c) }); }
   function delSampleFabric(id, idx) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c, sampleFabric:(c.sampleFabric||[]).filter((_,j)=>j!==idx)} : c) }); }
-  function addSleeveVariant(c) { if (!canEdit) return; const nc = { ...c, id:`C${Date.now()}`, sleeve: c.sleeve==="Half"?"Full":"Half", sizes:{}, samples:{} }; onUpdate({ ...design, colors:[...design.colors, nc] }); }
   const totalPcs = (design.colors||[]).reduce((a,c) => a+sizes.reduce((x,s)=>x+(+(c.sizes||{})[s]||0),0), 0);
   const totalSample = totalSamplePcs(design);
-
   return (
     <div style={{ fontFamily:T.sans, fontSize:12 }}>
       {locked
-        ? <div style={{ background:T.green+"22", border:`1px solid ${T.green}`, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.green }}>
-            🔒 Confirmed & locked by {design.lockedBy||"jobber"} · {design.lockedAtStr||""}. {isAdmin?"Tap Unlock below to edit.":"Only admin can unlock & change now."}
-          </div>
-        : <div style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.steelLt }}>
-            Fill cut quantities per size for each color (this is your job register). Edit per-color remark / balance fabric. When done, tap <b style={{color:T.gold}}>Confirm & Lock</b> — after that only admin can change.
-          </div>
+        ? <div style={{ background:T.green+"22", border:`1px solid ${T.green}`, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.green }}>🔒 Confirmed & locked by {design.lockedBy||"jobber"} · {design.lockedAtStr||""}. {isAdmin?"Tap Unlock below to edit.":"Only admin can unlock & change now."}</div>
+        : <div style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Fill TOTAL quantities per size for each colour. Tap Show Detailed Report to enter Samples (auto-calculates Dispatch). When done, tap <b style={{color:T.gold}}>Confirm & Lock</b>.</div>
       }
-      {/* Design header info like job register */}
       <div style={{ background:T.surface, borderRadius:8, padding:14, marginBottom:14, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 24px" }}>
         <div><span style={{ color:T.steelLt }}>Design No: </span><span style={{ color:T.gold, fontWeight:700, fontFamily:T.mono, fontSize:16 }}>{designLabel(design)}</span></div>
         <div><span style={{ color:T.steelLt }}>Brand: </span><span style={{ color:T.white }}>{design.brand}</span></div>
         <div><span style={{ color:T.steelLt }}>Fit: </span><span style={{ color:T.white }}>{design.fit}</span></div>
+        <div><span style={{ color:T.steelLt }}>Sleeve: </span><span style={{ color:T.white }}>{design.sleeveType||"Full"}</span></div>
         <div><span style={{ color:T.steelLt }}>Collar: </span><span style={{ color:T.white }}>{design.collarType}</span></div>
         <div><span style={{ color:T.steelLt }}>Wash: </span><span style={{ color:T.white }}>{design.washType}</span></div>
-        <div><span style={{ color:T.steelLt }}>Placket: </span><span style={{ color:T.white }}>{design.placket}</span></div>
-        <div><span style={{ color:T.steelLt }}>Shrinkage: </span><span style={{ color:T.white }}>Length {design.shrinkageLen} · Width {design.shrinkageWid}</span></div>
       </div>
       <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
         {[["Embroidery",design.hasEmbroidery],["Print",design.hasPrint],["Vinyl",design.hasVinyl],["Pocket",design.hasPocket],["Buttons",design.hasButtons],["Label",design.hasLabel]].map(([l,v]) => (
@@ -707,73 +578,71 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
         {(design.colors||[]).map((c,i) => {
-          const total = sizes.reduce((a,s) => a+(+(c.sizes||{})[s]||0), 0);
-          const samp = sizes.reduce((a,s) => a+(+(c.samples||{})[s]||0), 0);
-          const disp = total - samp;
           const sfMeters = (c.sampleFabric||[]).reduce((a,sf)=>a+(+sf.meters||0),0);
+          const st = design.sleeveType || "Full";
+          const variants = st==="Both" ? [["Full","sizes","samples"],["Half","sizesHalf","samplesHalf"]] : [[st, "sizes", "samples"]];
           return (
             <div key={c.id||i} style={{ display:"flex", gap:12, background:T.card, borderRadius:10, border:`1px solid ${T.border}`, padding:12 }}>
-              {/* Bigger swatch */}
               <div onContextMenu={e=>e.preventDefault()} style={{ width:90, height:90, borderRadius:8, overflow:"hidden", background:T.bg, border:`1px solid ${T.border}`, flexShrink:0 }}>
                 {c.swatch ? <img src={c.swatch} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", pointerEvents:"none" }} draggable={false} /> : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:T.textDim, fontSize:9, fontFamily:T.mono }}>No img</div>}
               </div>
               <div style={{ flex:1, minWidth:0 }}>
-                {/* Row header: colour, colour no, sleeve */}
                 <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:8 }}>
                   <span style={{ color:T.white, fontWeight:700, fontSize:14 }}>{c.colorName}</span>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No:
                     <input disabled={!canEdit} value={c.colorNo||""} onChange={e=>updColor(c.id,"colorNo",e.target.value)} placeholder="—" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, color:T.gold, fontFamily:T.mono, fontSize:11, width:50, padding:"2px 6px", marginLeft:4, borderRadius:4 }} />
                   </span>
-                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Sleeve:
-                    <input disabled={!canEdit} value={c.sleeve||""} onChange={e=>updColor(c.id,"sleeve",e.target.value)} placeholder="Full/Half" list="sleeveopts" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, color:T.white, fontFamily:T.sans, fontSize:11, width:80, padding:"2px 6px", marginLeft:4, borderRadius:4 }} />
-                  </span>
-                  {canEdit && <button onClick={()=>addSleeveVariant(c)} style={{ background:"none", border:`1px solid ${T.gold}55`, color:T.gold, borderRadius:4, fontSize:10, fontFamily:T.mono, padding:"3px 8px", cursor:"pointer" }}>+ sleeve variant</button>}
+                  <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>Sleeve: {st}</span>
                 </div>
-                {/* Size table */}
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ borderCollapse:"collapse", fontSize:11 }}>
-                    <thead>
-                      <tr style={{ background:T.surface }}>
-                        <th style={{ padding:"5px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}`, textAlign:"left" }}></th>
-                        {sizes.map(sz => <th key={sz} style={{ padding:"5px 6px", fontFamily:T.mono, fontSize:9, color:T.gold, border:`1px solid ${T.border}`, minWidth:44 }}>{sz}</th>)}
-                        <th style={{ padding:"5px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}` }}>TOTAL</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {/* TOTAL row (always) */}
-                      <tr>
-                        <td style={{ padding:"4px 8px", fontFamily:T.mono, fontSize:9, color:T.white, border:`1px solid ${T.border}`, fontWeight:700 }}>TOTAL</td>
-                        {sizes.map(sz => (
-                          <td key={sz} style={{ padding:"3px", border:`1px solid ${T.border}` }}>
-                            <input type="number" disabled={!canEdit} value={(c.sizes||{})[sz]||""} onChange={e=>updSize(c.id,sz,e.target.value)} placeholder="0" style={{ background:canEdit?T.bg:T.card, border:"none", color:T.text, fontFamily:T.mono, fontSize:13, width:40, padding:"6px 2px", textAlign:"center", opacity:canEdit?1:0.6 }} />
-                          </td>
-                        ))}
-                        <td style={{ padding:"4px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{total}</td>
-                      </tr>
-                      {detailed && <>
-                        {/* SAMPLE row */}
-                        <tr>
-                          <td style={{ padding:"4px 8px", fontFamily:T.mono, fontSize:9, color:T.orange, border:`1px solid ${T.border}` }}>SAMPLE</td>
-                          {sizes.map(sz => (
-                            <td key={sz} style={{ padding:"3px", border:`1px solid ${T.border}` }}>
-                              <input type="number" disabled={!canEdit} value={(c.samples||{})[sz]||""} onChange={e=>updSample(c.id,sz,e.target.value)} placeholder="0" style={{ background:canEdit?T.bg:T.card, border:"none", color:T.orange, fontFamily:T.mono, fontSize:11, width:40, padding:"4px 2px", textAlign:"center", opacity:canEdit?1:0.6 }} />
-                            </td>
-                          ))}
-                          <td style={{ padding:"4px", color:T.orange, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{samp}</td>
-                        </tr>
-                        {/* DISPATCH row (auto) */}
-                        <tr>
-                          <td style={{ padding:"4px 8px", fontFamily:T.mono, fontSize:9, color:T.green, border:`1px solid ${T.border}` }}>DISPATCH</td>
-                          {sizes.map(sz => { const t=+(c.sizes||{})[sz]||0, sm=+(c.samples||{})[sz]||0; return <td key={sz} style={{ padding:"4px", color:T.green, fontFamily:T.mono, fontSize:11, border:`1px solid ${T.border}`, textAlign:"center" }}>{t-sm}</td>; })}
-                          <td style={{ padding:"4px", color:T.green, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{disp}</td>
-                        </tr>
-                      </>}
-                    </tbody>
-                  </table>
-                </div>
-                {/* Remark */}
-                <input disabled={!canEdit} value={c.balance||""} onChange={e=>updColor(c.id,"balance",e.target.value)} placeholder="remark / balance fabric" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontFamily:T.sans, fontSize:11, width:"100%", padding:"5px 8px", marginTop:8, boxSizing:"border-box", opacity:canEdit?1:0.6 }} />
-                {/* Fabric + sample fabric */}
+                {variants.map(([vlabel, vsizes, vsamples]) => {
+                  const total = sizes.reduce((a,s) => a+(+(c[vsizes]||{})[s]||0), 0);
+                  const samp = sizes.reduce((a,s) => a+(+(c[vsamples]||{})[s]||0), 0);
+                  const disp = total - samp;
+                  return (
+                    <div key={vlabel} style={{ marginBottom:10 }}>
+                      {st==="Both" && <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, marginBottom:3, textTransform:"uppercase" }}>{vlabel} Sleeve</div>}
+                      <div style={{ overflowX:"auto" }}>
+                        <table style={{ borderCollapse:"collapse", fontSize:11 }}>
+                          <thead>
+                            <tr style={{ background:T.surface }}>
+                              <th style={{ padding:"5px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}`, textAlign:"left" }}></th>
+                              {sizes.map(sz => <th key={sz} style={{ padding:"5px 6px", fontFamily:T.mono, fontSize:9, color:T.gold, border:`1px solid ${T.border}`, minWidth:44 }}>{sz}</th>)}
+                              <th style={{ padding:"5px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}` }}>TOTAL</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td style={{ padding:"4px 8px", fontFamily:T.mono, fontSize:9, color:T.white, border:`1px solid ${T.border}`, fontWeight:700 }}>TOTAL</td>
+                              {sizes.map(sz => (
+                                <td key={sz} style={{ padding:"3px", border:`1px solid ${T.border}` }}>
+                                  <input type="number" disabled={!canEdit} value={(c[vsizes]||{})[sz]||""} onChange={e=>updColor(c.id, vsizes, {...(c[vsizes]||{}), [sz]:e.target.value})} placeholder="0" style={{ background:canEdit?T.bg:T.card, border:"none", color:T.text, fontFamily:T.mono, fontSize:13, width:40, padding:"6px 2px", textAlign:"center", opacity:canEdit?1:0.6 }} />
+                                </td>
+                              ))}
+                              <td style={{ padding:"4px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{total}</td>
+                            </tr>
+                            {detailed && <>
+                              <tr>
+                                <td style={{ padding:"4px 8px", fontFamily:T.mono, fontSize:9, color:T.orange, border:`1px solid ${T.border}` }}>SAMPLE</td>
+                                {sizes.map(sz => (
+                                  <td key={sz} style={{ padding:"3px", border:`1px solid ${T.border}` }}>
+                                    <input type="number" disabled={!canEdit} value={(c[vsamples]||{})[sz]||""} onChange={e=>updColor(c.id, vsamples, {...(c[vsamples]||{}), [sz]:e.target.value})} placeholder="0" style={{ background:canEdit?T.bg:T.card, border:"none", color:T.orange, fontFamily:T.mono, fontSize:11, width:40, padding:"4px 2px", textAlign:"center", opacity:canEdit?1:0.6 }} />
+                                  </td>
+                                ))}
+                                <td style={{ padding:"4px", color:T.orange, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{samp}</td>
+                              </tr>
+                              <tr>
+                                <td style={{ padding:"4px 8px", fontFamily:T.mono, fontSize:9, color:T.green, border:`1px solid ${T.border}` }}>DISPATCH</td>
+                                {sizes.map(sz => { const t=+(c[vsizes]||{})[sz]||0, sm=+(c[vsamples]||{})[sz]||0; return <td key={sz} style={{ padding:"4px", color:T.green, fontFamily:T.mono, fontSize:11, border:`1px solid ${T.border}`, textAlign:"center" }}>{t-sm}</td>; })}
+                                <td style={{ padding:"4px", color:T.green, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{disp}</td>
+                              </tr>
+                            </>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+                <input disabled={!canEdit} value={c.balance||""} onChange={e=>updColor(c.id,"balance",e.target.value)} placeholder="remark / balance fabric" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontFamily:T.sans, fontSize:11, width:"100%", padding:"5px 8px", marginTop:4, boxSizing:"border-box", opacity:canEdit?1:0.6 }} />
                 <div style={{ display:"flex", gap:12, alignItems:"center", marginTop:8, flexWrap:"wrap" }}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Fabric:
                     <input type="number" disabled={!canEdit} value={c.meters||""} onChange={e=>updColor(c.id,"meters",e.target.value)} placeholder="0" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, color:T.gold, fontFamily:T.mono, fontSize:11, width:60, padding:"2px 6px", marginLeft:4, borderRadius:4 }} /> m
@@ -1991,6 +1860,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           <Inp label="Fabric" value={d.fabric} onChange={upd("fabric")} />
           <Inp label="Supplier" value={d.supplier} onChange={upd("supplier")} />
           <Inp label="Fit" value={d.fit} onChange={upd("fit")} options={FITS} />
+          <Inp label="Sleeve Type" value={d.sleeveType||"Full"} onChange={upd("sleeveType")} options={["Full","Half","Both"]} />
         </div>
         <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end", marginTop:6 }}>
           <div>
@@ -2064,9 +1934,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
                 <PhotoUpload value={c.swatch} onChange={v => updColor(c.id,"swatch",v)} size={56} />
                 <div style={{ flex:1 }}>
                   <Inp label={`Color ${ci+1}`} value={c.colorName} onChange={v => updColor(c.id,"colorName",v)} placeholder="e.g. Navy Blue" />
-                  <div style={{ display:"flex", gap:6, marginTop:6 }}>
+                  <div style={{ marginTop:6 }}>
                     <Inp label="Color No" value={c.colorNo||""} onChange={v => updColor(c.id,"colorNo",v)} placeholder="201" />
-                    <Inp label="Sleeve" value={c.sleeve||""} onChange={v => updColor(c.id,"sleeve",v)} placeholder="Full/Half" />
                   </div>
                   <div style={{ marginTop:6 }}><Inp label="Meters" value={c.meters} onChange={v => updColor(c.id,"meters",v)} type="number" /></div>
                 </div>
