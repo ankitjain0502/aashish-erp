@@ -2529,7 +2529,7 @@ function ChallansPanel({ jobbers, designs, challans, setChallans, showToast, cur
         {isAdmin && pendingCount>0 && <Badge label={`${pendingCount} pending approval`} color={T.orange} />}
         <select value={filterJ} onChange={e => setFilterJ(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
           <option value="">All jobbers</option>
-          {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+          {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
         </select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
           <option value="all">All status</option>
@@ -2599,7 +2599,7 @@ function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fix
     onSave({ ...form, id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status: isAdmin?"approved":"pending", billed:false, createdBy:currentUser, createdAtStr:nowStr() });
   }
   return (
-    <Modal title="New Challan" onClose={onClose}>
+    <Modal title="New Challan (v2)" onClose={onClose}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
         {fixedJobber
           ? <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
@@ -2610,7 +2610,7 @@ function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fix
               <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Jobber *</label>
               <select value={form.jobberId} onChange={e => upd("jobberId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
                 <option value="">— select jobber —</option>
-                {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+                {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
               </select>
             </div>
         }
