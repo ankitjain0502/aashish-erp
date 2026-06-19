@@ -3332,21 +3332,26 @@ function NotificationBell({ notifications, currentUser, onOpenDesign, onMarkRead
         {unread.length > 0 && <span style={{ position:"absolute", top:0, right:2, background:T.red, color:"#fff", borderRadius:10, fontSize:9, fontWeight:700, padding:"1px 5px", fontFamily:T.mono }}>{unread.length}</span>}
       </button>
       {open && (
-        <div style={{ position:"fixed", top:60, left:"50%", transform:"translateX(-50%)", width:"min(360px,94vw)", maxHeight:"70vh", overflow:"auto", background:T.card, border:`1px solid ${T.border}`, borderRadius:10, boxShadow:"0 8px 30px #0009", zIndex:9999 }}>
-          <div style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:11, color:T.gold, fontWeight:700, textTransform:"uppercase" }}>Notifications {unread.length>0?`(${unread.length} new)`:""}</div>
-          {(notifications||[]).length === 0 && <div style={{ padding:24, textAlign:"center", color:T.textDim, fontFamily:T.mono, fontSize:12 }}>No notifications yet.</div>}
-          {(notifications||[]).slice(0,40).map(n => {
-            const isUnread = !(n.readBy||[]).includes(currentUser);
-            return (
-              <div key={n.id} onClick={() => { onMarkRead(n); if (n.designId) { onOpenDesign(n.designId); setOpen(false); } }} style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, cursor:"pointer", background:isUnread?T.surface:"transparent", display:"flex", gap:8, alignItems:"flex-start" }}>
-                {isUnread && <span style={{ width:8, height:8, borderRadius:"50%", background:T.gold, marginTop:5, flexShrink:0 }} />}
-                <div style={{ flex:1 }}>
-                  <div style={{ color:isUnread?T.white:T.steelLt, fontSize:12, fontWeight:isUnread?600:400 }}>{n.message}</div>
-                  <div style={{ color:T.textDim, fontSize:10, fontFamily:T.mono, marginTop:2 }}>{n.ts}</div>
+        <div onClick={() => setOpen(false)} style={{ position:"fixed", inset:0, background:"#000A", zIndex:99999, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"16px", boxSizing:"border-box" }}>
+          <div onClick={e => e.stopPropagation()} style={{ marginTop:50, width:"min(420px,100%)", maxHeight:"80vh", overflow:"auto", background:T.card, border:`1px solid ${T.border}`, borderRadius:12, boxShadow:"0 8px 40px #000", boxSizing:"border-box" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 16px", borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, background:T.card }}>
+              <span style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700, textTransform:"uppercase" }}>Notifications {unread.length>0?`(${unread.length} new)`:""}</span>
+              <button onClick={() => setOpen(false)} style={{ background:"none", border:"none", color:T.steelLt, fontSize:22, cursor:"pointer", lineHeight:1 }}>✕</button>
+            </div>
+            {(notifications||[]).length === 0 && <div style={{ padding:24, textAlign:"center", color:T.textDim, fontFamily:T.mono, fontSize:12 }}>No notifications yet.</div>}
+            {(notifications||[]).slice(0,40).map(n => {
+              const isUnread = !(n.readBy||[]).includes(currentUser);
+              return (
+                <div key={n.id} onClick={() => { onMarkRead(n); if (n.designId) { onOpenDesign(n.designId); setOpen(false); } }} style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, cursor:"pointer", background:isUnread?T.surface:"transparent", display:"flex", gap:8, alignItems:"flex-start" }}>
+                  {isUnread && <span style={{ width:8, height:8, borderRadius:"50%", background:T.gold, marginTop:5, flexShrink:0 }} />}
+                  <div style={{ flex:1 }}>
+                    <div style={{ color:isUnread?T.white:T.steelLt, fontSize:13, fontWeight:isUnread?600:400 }}>{n.message}</div>
+                    <div style={{ color:T.textDim, fontSize:10, fontFamily:T.mono, marginTop:2 }}>{n.ts}</div>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
