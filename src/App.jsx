@@ -13,12 +13,24 @@ async function dbSelect(table) {
 }
 async function dbUpsert(table, data) {
   try {
-    await fetch(`${SUPA_URL}/rest/v1/${table}`, {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, {
       method: "POST",
       headers: { ...HDR, "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(Array.isArray(data) ? data : [data]),
     });
-  } catch(e) { console.error(e); }
+    if (!r.ok) {
+      let msg = "";
+      try { msg = await r.text(); } catch(e) {}
+      console.error(`SAVE FAILED [${table}] ${r.status}:`, msg);
+      if (typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Save failed (${table}): ${r.status} ${msg.slice(0,180)}`);
+      return { ok:false, status:r.status, msg };
+    }
+    return { ok:true };
+  } catch(e) {
+    console.error(`SAVE ERROR [${table}]:`, e);
+    if (typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Save error (${table}): ${e?.message||e}`);
+    return { ok:false, error:e };
+  }
 }
 async function dbDelete(table, id) {
   try { await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, { method: "DELETE", headers: HDR }); }
@@ -2236,21 +2248,14 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
           const diff = +(fabricBillQty - colourMeters).toFixed(2);
           const match = Math.abs(diff) < 0.01;
           return (
-            <div style={{ marginTop:14, background:T.bg, borderRadius:8, padding:"12px 16px", border:`1px solid ${match?T.green:T.orange}` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:8, alignItems:"center" }}>
-                <div style={{ fontFamily:T.mono, fontSize:12, color:T.steelLt }}>
-                  Fabric bills: <b style={{color:T.gold}}>{fabricBillQty} m</b> &nbsp;·&nbsp; Colour swatches total: <b style={{color:T.white}}>{colourMeters} m</b>
-                  {trimsBillQty>0 && <span> &nbsp;·&nbsp; Trims bills: <b style={{color:T.gold}}>{trimsBillQty} m</b></span>}
-                </div>
-                {!match && <Btn label="Auto-fill colour meters to match" small color={T.surface} textColor={T.gold} onClick={() => {
-                  const cols = d.colors||[]; if (cols.length===0) return;
-                  const each = +(fabricBillQty / cols.length).toFixed(2);
-                  setD(f => ({...f, colors:f.colors.map(c => ({...c, meters: each}))}));
-                }} />}
+            <div style={{ marginTop:14, background:match?T.bg:T.red+"22", borderRadius:8, padding:"12px 16px", border:`2px solid ${match?T.green:T.red}` }}>
+              <div style={{ fontFamily:T.mono, fontSize:12, color:T.steelLt }}>
+                Fabric bill total: <b style={{color:T.gold}}>{fabricBillQty} m</b> &nbsp;·&nbsp; Colour meters total: <b style={{color:match?T.green:T.red}}>{colourMeters} m</b>
+                {trimsBillQty>0 && <span> &nbsp;·&nbsp; Trims bills: <b style={{color:T.gold}}>{trimsBillQty} m</b></span>}
               </div>
               {match
-                ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.green, marginTop:6 }}>✓ Fabric bill quantity matches colour swatch total.</div>
-                : <div style={{ fontFamily:T.mono, fontSize:11, color:T.orange, marginTop:6 }}>⚠ Mismatch of {Math.abs(diff)} m — fabric bills {diff>0?"exceed":"are short of"} the colour swatch total. Adjust colour meters or the bill, or tap auto-fill.</div>
+                ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.green, marginTop:6 }}>✓ Colour meters match the fabric bill total.</div>
+                : <div style={{ fontFamily:T.mono, fontSize:12, color:T.red, marginTop:6, fontWeight:700 }}>⚠ Does NOT match — colour meters {diff>0?`are SHORT by ${Math.abs(diff)} m`:`EXCEED by ${Math.abs(diff)} m`}. Edit each colour's meters above so the total equals the fabric bill ({fabricBillQty} m).</div>
               }
             </div>
           );
@@ -3327,7 +3332,7 @@ function NotificationBell({ notifications, currentUser, onOpenDesign, onMarkRead
         {unread.length > 0 && <span style={{ position:"absolute", top:0, right:2, background:T.red, color:"#fff", borderRadius:10, fontSize:9, fontWeight:700, padding:"1px 5px", fontFamily:T.mono }}>{unread.length}</span>}
       </button>
       {open && (
-        <div style={{ position:"absolute", right:0, top:"100%", marginTop:4, width:"min(340px,90vw)", maxHeight:"60vh", overflow:"auto", background:T.card, border:`1px solid ${T.border}`, borderRadius:10, boxShadow:"0 8px 30px #0009", zIndex:500 }}>
+        <div style={{ position:"fixed", top:60, left:"50%", transform:"translateX(-50%)", width:"min(360px,94vw)", maxHeight:"70vh", overflow:"auto", background:T.card, border:`1px solid ${T.border}`, borderRadius:10, boxShadow:"0 8px 30px #0009", zIndex:9999 }}>
           <div style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:11, color:T.gold, fontWeight:700, textTransform:"uppercase" }}>Notifications {unread.length>0?`(${unread.length} new)`:""}</div>
           {(notifications||[]).length === 0 && <div style={{ padding:24, textAlign:"center", color:T.textDim, fontFamily:T.mono, fontSize:12 }}>No notifications yet.</div>}
           {(notifications||[]).slice(0,40).map(n => {
@@ -3743,6 +3748,7 @@ export default function App() {
   const [challans, setChallans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadInfo, setLoadInfo] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   async function loadAll() {
     try {
@@ -3771,15 +3777,28 @@ export default function App() {
   }
 
   useEffect(() => { _logSink = (entry) => setActivityLog(prev => [entry, ...prev]); _notifSink = (entry) => setNotifications(prev => [entry, ...prev]); return () => { _logSink = null; _notifSink = null; }; }, []);
+  useEffect(() => {
+    window.__erpSaveError = (msg) => setSaveError(msg);
+    return () => { window.__erpSaveError = null; };
+  }, []);
   useEffect(() => { loadAll(); }, []);
 
   if (loading) return <Loader />;
   if (!auth) return <Login people={people} loadInfo={loadInfo} onRefresh={loadAll} onAdmin={name => setAuth({role:"admin", name})} onUser={u => setAuth({role:u.role, user:u, name:u.name})} />;
 
+  const errorBanner = saveError ? (
+    <div style={{ position:"fixed", top:0, left:0, right:0, zIndex:9998, background:T.red, color:"#fff", padding:"10px 16px", fontFamily:T.mono, fontSize:12, fontWeight:700, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+      <span>⚠ {saveError} — your last change did NOT save. Tell admin to check the database column.</span>
+      <button onClick={() => setSaveError("")} style={{ background:"#fff", color:T.red, border:"none", borderRadius:4, padding:"4px 12px", fontFamily:T.mono, fontWeight:700, cursor:"pointer" }}>Dismiss</button>
+    </div>
+  ) : null;
+
   if (auth.role === "jobber") {
-    return <JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} onLogout={() => setAuth(null)} />;
+    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} onLogout={() => setAuth(null)} /></>;
   }
   return (
+    <>
+    {errorBanner}
     <Workspace
       role={auth.role}
       currentUser={auth.name}
@@ -3793,5 +3812,6 @@ export default function App() {
       challans={challans} setChallans={setChallans}
       onLogout={() => setAuth(null)}
     />
+    </>
   );
 }
