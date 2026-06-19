@@ -373,7 +373,7 @@ function Inp({ label, value, onChange, type="text", placeholder="", style={}, op
   const base = { background:readOnly?T.bg:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", outline:"none", boxSizing:"border-box" };
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:4, ...style }}>
-      {label && <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>{label}</label>}
+      {label && <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>{typeof label==="string" ? <BL text={label} /> : label}</label>}
       {options
         ? <select value={value} onChange={e => onChange(e.target.value)} style={base} disabled={readOnly}>
             <option value="">— select —</option>
@@ -388,7 +388,7 @@ function Inp({ label, value, onChange, type="text", placeholder="", style={}, op
 function Btn({ label, onClick, color=T.gold, textColor=T.bg, small, style={}, disabled }) {
   return (
     <button onClick={onClick} disabled={disabled} style={{ background:disabled?T.border:color, color:disabled?T.textDim:textColor, border:"none", borderRadius:6, fontFamily:T.mono, fontWeight:700, fontSize:small?10:12, padding:small?"5px 12px":"9px 20px", cursor:disabled?"not-allowed":"pointer", ...style }}>
-      {label}
+      {typeof label==="string" ? <BL text={label} /> : label}
     </button>
   );
 }
@@ -401,7 +401,7 @@ function Section({ title, children, action }) {
   return (
     <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, marginBottom:18 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 20px", borderBottom:`1px solid ${T.border}` }}>
-        <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase", letterSpacing:1 }}>{title}</span>
+        <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase", letterSpacing:1 }}>{typeof title==="string" ? <BL text={title} /> : title}</span>
         {action}
       </div>
       <div style={{ padding:20 }}>{children}</div>
@@ -422,7 +422,7 @@ function PhotoUpload({ label, value, onChange, size=60 }) {
   }
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-      {label && <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>{label}</label>}
+      {label && <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>{typeof label==="string" ? <BL text={label} /> : label}</label>}
       <div onClick={() => ref.current.click()} onContextMenu={e => e.preventDefault()} style={{ width:size, height:size, borderRadius:6, border:`2px dashed ${T.border}`, cursor:"pointer", overflow:"hidden", background:T.surface, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
         {value
           ? <img src={value} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", pointerEvents:"none" }} draggable={false} />
@@ -480,12 +480,134 @@ const TRANSLATIONS = {
   "Send": { hi:"भेजें", gu:"મોકલો" },
   "Confirm & Lock": { hi:"पक्का करें और लॉक करें", gu:"કન્ફર્મ અને લોક કરો" },
   "Logout": { hi:"लॉग आउट", gu:"લોગ આઉટ" },
+  // ── Common field labels ──
+  "Design Number *": { hi:"डिज़ाइन नंबर *" },
+  "Design Number": { hi:"डिज़ाइन नंबर" },
+  "Design No *": { hi:"डिज़ाइन नंबर *" },
+  "Design No": { hi:"डिज़ाइन नंबर" },
+  "Lot No (this run)": { hi:"लॉट नंबर (इस बार)" },
+  "Main Design No": { hi:"मुख्य डिज़ाइन नंबर" },
+  "Brand": { hi:"ब्रांड" },
+  "Style": { hi:"स्टाइल" },
+  "Fabric": { hi:"कपड़ा" },
+  "Supplier": { hi:"सप्लायर" },
+  "Fit": { hi:"फिट" },
+  "Sleeve Type": { hi:"आस्तीन प्रकार" },
+  "Collar Type": { hi:"कॉलर प्रकार" },
+  "Wash Type": { hi:"धुलाई प्रकार" },
+  "Placket": { hi:"पट्टी" },
+  "Quantity": { hi:"मात्रा" },
+  "Quantity *": { hi:"मात्रा *" },
+  "Quantity (m)": { hi:"मात्रा (मीटर)" },
+  "Quantity (meters)": { hi:"मात्रा (मीटर)" },
+  "Qty": { hi:"मात्रा" },
+  "Qty (pieces)": { hi:"मात्रा (पीस)" },
+  "Rate": { hi:"रेट" },
+  "Rate (Rs.)": { hi:"रेट (रु.)" },
+  "Rate/pc": { hi:"रेट/पीस" },
+  "Amount": { hi:"रकम" },
+  "Amount (Rs.)": { hi:"रकम (रु.)" },
+  "Amount (auto)": { hi:"रकम (अपने आप)" },
+  "Date": { hi:"तारीख" },
+  "Bill Date": { hi:"बिल तारीख" },
+  "Bill No": { hi:"बिल नंबर" },
+  "Bill No *": { hi:"बिल नंबर *" },
+  "Challan No": { hi:"चालान नंबर" },
+  "LR No": { hi:"एलआर नंबर" },
+  "LR Number": { hi:"एलआर नंबर" },
+  "Process": { hi:"काम" },
+  "Jobber": { hi:"जॉबर" },
+  "Jobber *": { hi:"जॉबर *" },
+  "Customer": { hi:"ग्राहक" },
+  "Customer Name": { hi:"ग्राहक का नाम" },
+  "Color": { hi:"रंग" },
+  "Color No": { hi:"रंग नंबर" },
+  "Meters": { hi:"मीटर" },
+  "Booking Date": { hi:"बुकिंग तारीख" },
+  "Delivery Date": { hi:"डिलीवरी तारीख" },
+  "Notes": { hi:"नोट्स" },
+  "Note": { hi:"नोट" },
+  "Full Name *": { hi:"पूरा नाम *" },
+  "Role": { hi:"भूमिका" },
+  "Phone": { hi:"फ़ोन" },
+  "GST Number": { hi:"जीएसटी नंबर" },
+  "Address / Shop": { hi:"पता / दुकान" },
+  "Name": { hi:"नाम" },
+  "Mode": { hi:"तरीका" },
+  "Particulars (Supplier)": { hi:"विवरण (सप्लायर)" },
+  "Type": { hi:"प्रकार" },
+  "Trims (meters, added on top)": { hi:"ट्रिम्स (मीटर, ऊपर से)" },
+  "Date Program Given": { hi:"प्रोग्राम देने की तारीख" },
+  "Date Cut": { hi:"कटिंग तारीख" },
+  "Shrinkage Length": { hi:"सिकुड़न लंबाई" },
+  "Shrinkage Width": { hi:"सिकुड़न चौड़ाई" },
+  // ── Buttons ──
+  "Save": { hi:"सेव करें" },
+  "Save Changes": { hi:"बदलाव सेव करें" },
+  "Save Bill": { hi:"बिल सेव करें" },
+  "Save Payment": { hi:"पेमेंट सेव करें" },
+  "Save Challan": { hi:"चालान सेव करें" },
+  "Add": { hi:"जोड़ें" },
+  "Create Design": { hi:"डिज़ाइन बनाएं" },
+  "Edit": { hi:"बदलें" },
+  "Edit Design": { hi:"डिज़ाइन बदलें" },
+  "Delete": { hi:"मिटाएं" },
+  "Yes, Delete": { hi:"हाँ, मिटाएं" },
+  "Login": { hi:"लॉगिन" },
+  "Back": { hi:"वापस" },
+  "Admin Login": { hi:"एडमिन लॉगिन" },
+  "Team Member Login": { hi:"टीम सदस्य लॉगिन" },
+  "Jobber Login": { hi:"जॉबर लॉगिन" },
+  "+ New Design": { hi:"+ नया डिज़ाइन" },
+  "+ New Bill": { hi:"+ नया बिल" },
+  "+ New Challan": { hi:"+ नया चालान" },
+  "+ Add Color": { hi:"+ रंग जोड़ें" },
+  "+ Add Order": { hi:"+ ऑर्डर जोड़ें" },
+  "+ Add Bill": { hi:"+ बिल जोड़ें" },
+  "+ Add Booking": { hi:"+ बुकिंग जोड़ें" },
+  "+ Record Payment": { hi:"+ पेमेंट दर्ज करें" },
+  "Export PDF": { hi:"पीडीएफ निकालें" },
+  "Mark Completed": { hi:"पूरा हुआ चिह्नित करें" },
+  "Reopen": { hi:"फिर खोलें" },
+  "Approve": { hi:"मंज़ूर करें" },
+  "Reject": { hi:"नामंज़ूर करें" },
+  // ── Section / tab titles ──
+  "Design Identity": { hi:"डिज़ाइन पहचान" },
+  "Color Swatches": { hi:"रंग के नमूने" },
+  "Customer Orders": { hi:"ग्राहक ऑर्डर" },
+  "Movement Log": { hi:"मूवमेंट लॉग" },
+  "Job Sheet": { hi:"जॉब शीट" },
+  "Fill Sizes": { hi:"साइज़ भरें" },
+  "Flow": { hi:"प्रवाह" },
+  "Photos": { hi:"फ़ोटो" },
+  "Bookings": { hi:"बुकिंग" },
+  "Challans": { hi:"चालान" },
+  "People": { hi:"लोग" },
+  "Search": { hi:"खोजें" },
+  "Designs": { hi:"डिज़ाइन" },
+  "Home": { hi:"होम" },
 };
 function makeL(lang) {
   return (txt) => {
     if (lang === "en" || !TRANSLATIONS[txt]) return txt;
     return TRANSLATIONS[txt][lang] || txt;
   };
+}
+// Hindi for a label, if we have it
+function hindiOf(txt) {
+  const t = TRANSLATIONS[txt];
+  return (t && t.hi) ? t.hi : "";
+}
+// Bilingual stacked label: English on top, Hindi smaller below
+function BL({ text, color }) {
+  const hi = hindiOf(text);
+  if (!hi) return <>{text}</>;
+  return (
+    <span style={{ display:"inline-flex", flexDirection:"column", lineHeight:1.15 }}>
+      <span>{text}</span>
+      <span style={{ fontSize:"0.82em", opacity:0.78, fontWeight:400 }}>{hi}</span>
+    </span>
+  );
 }
 function LangToggle({ lang, setLang }) {
   const opts = [["en","EN"],["hi","हिं"],["gu","ગુ"]];
@@ -1849,7 +1971,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       <div style={{ display:"flex", gap:3, marginBottom:16, background:T.surface, borderRadius:8, padding:4, flexWrap:"wrap" }}>
         {DTABS.map(t => (
           <button key={t} onClick={() => setDt(t)} style={{ background:dt===t?T.card:"none", border:"none", borderRadius:6, color:dt===t?T.gold:T.steelLt, fontFamily:T.mono, fontSize:10, fontWeight:700, padding:"7px 12px", cursor:"pointer", textTransform:"uppercase", position:"relative" }}>
-            {t}
+            <BL text={t} />
             {t==="Pending Approvals" && pending.length > 0 && <span style={{ background:T.red, color:"#fff", borderRadius:10, fontSize:8, padding:"1px 5px", marginLeft:4 }}>{pending.length}</span>}
           </button>
         ))}
@@ -3406,7 +3528,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
             <div style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, letterSpacing:2 }}>PRODUCTION ERP · {isAdmin?"ADMIN":"TEAM"} · {currentUser}</div>
           </div>
           {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{ background:"none", border:"none", cursor:"pointer", padding:"18px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, color:tab===t?T.gold:T.steelLt, borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent", marginBottom:-2, textTransform:"uppercase" }}>{t}</button>
+            <button key={t} onClick={() => setTab(t)} style={{ background:"none", border:"none", cursor:"pointer", padding:"18px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, color:tab===t?T.gold:T.steelLt, borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent", marginBottom:-2, textTransform:"uppercase" }}><BL text={t} /></button>
           ))}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
