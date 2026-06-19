@@ -43,7 +43,10 @@ const PROC_MAP = [
   { digit: "5", name: "Press" },
   { digit: "6", name: "Fabric" },
   { digit: "7", name: "Cut to Pack" },
-  { digit: "8", name: "Other" },
+  { digit: "8", name: "Printing" },
+  { digit: "9", name: "Embroidery" },
+  { digit: "A", name: "Vinyl" },
+  { digit: "B", name: "Other" },
 ];
 const PROCESSES = PROC_MAP.map(p => p.name);
 const FITS = ["Regular Fit","Slim Fit","Loose Fit","Oversized"];
@@ -229,12 +232,12 @@ function rowToD(r) {
   };
 }
 function jToRow(j) {
-  return { id: j.id, name: j.name||"", pin: j.pin||"", process: j.process||"", prefix: j.prefix||"", process_codes: j.processCodes||[], phone: j.phone||"", gst: j.gst||"", email: j.email||"", address: j.address||"", role: j.role||"jobber", contacts: j.contacts||[], size_filler: !!j.sizeFiller };
+  return { id: j.id, name: j.name||"", pin: j.pin||"", process: j.process||"", prefix: j.prefix||"", process_codes: j.processCodes||[], phone: j.phone||"", gst: j.gst||"", email: j.email||"", address: j.address||"", role: j.role||"jobber", contacts: j.contacts||[], size_filler: !!j.sizeFiller, can_create_design: !!j.canCreateDesign };
 }
 function rowToJ(r) {
   let pc = r.process_codes||[];
   if ((!pc || pc.length===0) && (r.process||r.prefix)) pc = [{ process: r.process||"", code: r.prefix||"" }];
-  return { id: r.id, name: r.name||"", pin: r.pin||"", process: r.process||"", prefix: r.prefix||"", processCodes: pc, phone: r.phone||"", gst: r.gst||"", email: r.email||"", address: r.address||"", role: r.role||"jobber", contacts: r.contacts||[], sizeFiller: !!r.size_filler };
+  return { id: r.id, name: r.name||"", pin: r.pin||"", process: r.process||"", prefix: r.prefix||"", processCodes: pc, phone: r.phone||"", gst: r.gst||"", email: r.email||"", address: r.address||"", role: r.role||"jobber", contacts: r.contacts||[], sizeFiller: !!r.size_filler, canCreateDesign: !!r.can_create_design };
 }
 // helper: get a jobber's code for a given process (falls back to prefix)
 function codeForProcess(jobber, processName) {
@@ -1436,6 +1439,24 @@ function rowToNotif(r) {
   return { id:r.id, ts:r.ts||"", who:r.who||"", message:r.message||"", designId:r.design_id||"", readBy:r.read_by||[] };
 }
 
+// Build a minimal placeholder design from a challan (admin completes details later)
+function makePlaceholderDesign(challan, currentUser) {
+  return {
+    id:`D${Date.now()}`, designNo: challan.designNo||"", lotNo:"", sleeveType:"Full",
+    brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels",
+    p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"", collarType:"",
+    shrinkageLen:"", shrinkageWid:"", placket:"", washType:"",
+    hasEmbroidery:false, hasPrint:false, hasVinyl:false, hasPocket:false, hasButtons:false, hasLabel:false,
+    specs:[], ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, formOrder:[],
+    dateProgram:"", dateCut:"", notes:`Auto-created from challan by ${challan.createdBy||currentUser||""}. Please complete details.`,
+    activeColors:["S","M","L","XL","XXL"], colors:[], processes:{}, photos:[],
+    supplierBills:[], customerOrders:[], movements:[], jobberEntries:[],
+    status:"New", mrpFinalized:false, locked:false, lockedBy:"", lockedAtStr:"",
+    barcodeBlock:null, productionDate:"", createdBy: currentUser||challan.createdBy||"", createdAtStr: nowStr(),
+    editedBy:"", editedAtStr:"", editCount:0, fromChallan:true
+  };
+}
+
 function challanToRow(c) {
   return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
 }
@@ -2301,7 +2322,7 @@ function JobberDesigns({ jobber, designs, onClose }) {
 }
 
 // ── People Manager (Jobbers + Team Members) ───────────────────────────────────
-const BLANK_P = { name:"", pin:"", process:"", prefix:"", processCodes:[], phone:"", gst:"", address:"", email:"", role:"jobber", contacts:[], sizeFiller:false };
+const BLANK_P = { name:"", pin:"", process:"", prefix:"", processCodes:[], phone:"", gst:"", address:"", email:"", role:"jobber", contacts:[], sizeFiller:false, canCreateDesign:false };
 function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(BLANK_P);
@@ -2332,6 +2353,11 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
     const editingId = (modal && modal.id) ? modal.id : null;
     const clash = people.find(p => String(p.pin)===String(form.pin) && p.id!==editingId);
     if (clash) { showToast(`PIN already used by ${clash.name}. Choose a different PIN.`,"error"); return; }
+    // warn if a person with the same name already exists (likely a duplicate — add the task to that card instead)
+    if (modal === "add") {
+      const nameClash = people.find(p => (p.name||"").trim().toLowerCase() === form.name.trim().toLowerCase());
+      if (nameClash) { showToast(`"${nameClash.name}" already exists. Edit that card and tick the extra task instead of adding a duplicate.`,"error"); return; }
+    }
     const first = (form.processCodes||[])[0];
     if (first) { form.process = first.process; form.prefix = first.code; }
     setSaving(true);
@@ -2430,8 +2456,14 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
             </label>
           )}
           {form.role==="jobber" && (
+            <label style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, cursor:"pointer", fontFamily:T.sans, fontSize:13, color:T.text }}>
+              <input type="checkbox" checked={!!form.canCreateDesign} onChange={e => upd("canCreateDesign")(e.target.checked)} style={{ width:18, height:18, accentColor:T.gold }} />
+              Allow this jobber to create a NEW design from a challan (placeholder — admin completes later). Use for trusted jobbers only.
+            </label>
+          )}
+          {form.role==="jobber" && (
             <div style={{ marginBottom:16 }}>
-              <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8, marginBottom:8 }}>Processes & Barcode Codes (tick each work this person does)</div>
+              <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8, marginBottom:8 }}>Area of Work — tick every task this jobber does (one card per jobber)</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:8 }}>
                 {PROCESSES.filter(p => p!=="Fabric").map(pn => {
                   const checked = (form.processCodes||[]).some(x => x.process===pn);
@@ -2489,7 +2521,7 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
 }
 
 // ── Challans (jobber-entered, admin-approved; feeds bills) ─────────────────────
-function ChallansPanel({ jobbers, designs, challans, setChallans, showToast, currentUser, role }) {
+function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, showToast, currentUser, role }) {
   const isAdmin = role === "admin";
   const [filterJ, setFilterJ] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -2576,6 +2608,13 @@ function ChallansPanel({ jobbers, designs, challans, setChallans, showToast, cur
       {list.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No challans.</div>}
 
       {showForm && <ChallanForm jobbers={jobbers} designs={designs} role={role} currentUser={currentUser} onClose={()=>setShowForm(false)} onSave={async (c) => {
+        if (c.newDesign && !designs.some(d => String(d.designNo)===String(c.designNo))) {
+          const nd = makePlaceholderDesign(c, currentUser);
+          await dbUpsert("designs", dToRow(nd));
+          setDesigns(p => [nd, ...p]);
+          recordActivity(currentUser, "Created placeholder design (via challan)", `Design ${c.designNo}`, "needs completion");
+          recordNotification(currentUser, `New placeholder design ${c.designNo} created via challan — complete its details`, nd.id);
+        }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
         recordActivity(currentUser, "Added challan", `Design ${c.designNo}`, `${jname(c.jobberId)} · ${c.qty} pcs`);
@@ -2590,13 +2629,20 @@ function ChallansPanel({ jobbers, designs, challans, setChallans, showToast, cur
 function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fixedJobber }) {
   const isAdmin = role === "admin";
   const [form, setForm] = useState({ jobberId: fixedJobber||"", designNo:"", process:"", qty:"", rate:"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"" });
+  const [newDesignMode, setNewDesignMode] = useState(false);
   const upd = k => v => setForm(f => ({ ...f, [k]:v }));
   const amount = (+form.qty||0) * (+form.rate||0);
+  // who is creating? admin can always add new; a jobber needs the canCreateDesign permission
+  const actingJobber = jobbers.find(j => j.id === (fixedJobber || form.jobberId));
+  const mayCreateDesign = isAdmin || (actingJobber && actingJobber.canCreateDesign);
+  // is the typed design number actually new (not in the list)?
+  const designExists = designs.some(d => String(d.designNo) === String(form.designNo).trim());
+  const isNewDesign = newDesignMode && form.designNo.trim() && !designExists;
   function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => upd("photo")(src)).catch(()=>{}); }
   const photoRef = useRef();
   function save() {
     if (!form.jobberId || !form.designNo || !form.qty) return;
-    onSave({ ...form, id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status: isAdmin?"approved":"pending", billed:false, createdBy:currentUser, createdAtStr:nowStr() });
+    onSave({ ...form, designNo: form.designNo.trim(), id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status: isAdmin?"approved":"pending", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesign: isNewDesign });
   }
   return (
     <Modal title="New Challan (v2)" onClose={onClose}>
@@ -2614,7 +2660,21 @@ function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fix
               </select>
             </div>
         }
-        <Inp label="Design No *" value={form.designNo} onChange={upd("designNo")} options={designs.map(d=>d.designNo)} />
+        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Design No *</label>
+            {mayCreateDesign && <button onClick={() => { setNewDesignMode(m => !m); upd("designNo")(""); }} style={{ background:"none", border:"none", color:T.gold, fontFamily:T.mono, fontSize:9, cursor:"pointer", textTransform:"uppercase" }}>{newDesignMode ? "pick existing" : "+ new design"}</button>}
+          </div>
+          {newDesignMode
+            ? <input value={form.designNo} onChange={e => upd("designNo")(e.target.value)} placeholder="Type new design no" style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }} />
+            : <select value={form.designNo} onChange={e => upd("designNo")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
+                <option value="">— select —</option>
+                {designs.map(d => <option key={d.id} value={d.designNo}>{designLabel(d)}</option>)}
+              </select>
+          }
+          {isNewDesign && <span style={{ fontFamily:T.mono, fontSize:9, color:T.green }}>✓ New placeholder design will be created — admin completes details later.</span>}
+          {newDesignMode && form.designNo.trim() && designExists && <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>This design already exists — challan will link to it.</span>}
+        </div>
         <Inp label="Process" value={form.process} onChange={upd("process")} options={PROCESSES} />
         <Inp label="Date" type="date" value={form.date} onChange={upd("date")} />
         <Inp label="Quantity *" type="number" value={form.qty} onChange={upd("qty")} />
@@ -3117,6 +3177,12 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         })}
       </div>
       {showChallan && <ChallanForm jobbers={people} designs={designs} role="jobber" currentUser={user.name} fixedJobber={user.id} onClose={()=>setShowChallan(false)} onSave={async (c) => {
+        if (c.newDesign && !designs.some(d => String(d.designNo)===String(c.designNo))) {
+          const nd = makePlaceholderDesign(c, user.name);
+          await dbUpsert("designs", dToRow(nd));
+          setDesigns(p => [nd, ...p]);
+          recordNotification(user.name, `New placeholder design ${c.designNo} created via challan by ${user.name} — complete its details`, nd.id);
+        }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
         recordNotification(user.name, `New challan — Design ${c.designNo} by ${user.name} (${c.qty} pcs) — needs approval`, "");
@@ -3429,7 +3495,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
         )}
         {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} showToast={showToast} currentUser={currentUser} /></div></Section>}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
-        {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
+        {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals" action={<PdfBtn targetId="rpt-fabric" title="Fabric Purchases" />}><div id="rpt-fabric"><FabricPurchases designs={designs} /></div></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
