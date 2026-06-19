@@ -229,12 +229,12 @@ function rowToD(r) {
   };
 }
 function jToRow(j) {
-  return { id: j.id, name: j.name||"", pin: j.pin||"", process: j.process||"", prefix: j.prefix||"", process_codes: j.processCodes||[], phone: j.phone||"", gst: j.gst||"", email: j.email||"", address: j.address||"", role: j.role||"jobber", contacts: j.contacts||[] };
+  return { id: j.id, name: j.name||"", pin: j.pin||"", process: j.process||"", prefix: j.prefix||"", process_codes: j.processCodes||[], phone: j.phone||"", gst: j.gst||"", email: j.email||"", address: j.address||"", role: j.role||"jobber", contacts: j.contacts||[], size_filler: !!j.sizeFiller };
 }
 function rowToJ(r) {
   let pc = r.process_codes||[];
   if ((!pc || pc.length===0) && (r.process||r.prefix)) pc = [{ process: r.process||"", code: r.prefix||"" }];
-  return { id: r.id, name: r.name||"", pin: r.pin||"", process: r.process||"", prefix: r.prefix||"", processCodes: pc, phone: r.phone||"", gst: r.gst||"", email: r.email||"", address: r.address||"", role: r.role||"jobber", contacts: r.contacts||[] };
+  return { id: r.id, name: r.name||"", pin: r.pin||"", process: r.process||"", prefix: r.prefix||"", processCodes: pc, phone: r.phone||"", gst: r.gst||"", email: r.email||"", address: r.address||"", role: r.role||"jobber", contacts: r.contacts||[], sizeFiller: !!r.size_filler };
 }
 // helper: get a jobber's code for a given process (falls back to prefix)
 function codeForProcess(jobber, processName) {
@@ -242,6 +242,15 @@ function codeForProcess(jobber, processName) {
   const pc = (jobber.processCodes||[]).find(x => x.process===processName);
   if (pc) return pc.code;
   return jobber.prefix || "";
+}
+// helper: can this jobber fill the size grid? (Stitch/Cut processes, tagged, or admin)
+function canFillSizes(jobber) {
+  if (!jobber) return false;
+  if (jobber.role === "admin") return true;
+  if (jobber.sizeFiller) return true;
+  const fillerProcs = ["Stitch","Cut to Pack"];
+  if ((jobber.processCodes||[]).some(x => fillerProcs.includes(x.process))) return true;
+  return fillerProcs.includes(jobber.process);
 }
 // helper: does jobber do this process?
 function jobberDoesProcess(jobber, processName) {
@@ -486,10 +495,10 @@ function LangToggle({ lang, setLang }) {
   );
 }
 // ── Send-To modal (jobber passes lot to next jobber or office) ────────────────
-function SendToModal({ design, people, fromJobber, onClose, onSend, L = (x)=>x }) {
+function SendToModal({ design, people, fromJobber, onClose, onSend, L = (x)=>x, fixedQty }) {
   const jobbers = people.filter(p => p.role==="jobber" && p.id!==(fromJobber&&fromJobber.id));
   const [toId, setToId] = useState("");
-  const [qty, setQty] = useState("");
+  const [qty, setQty] = useState(fixedQty!=null ? String(fixedQty) : "");
   const [remark, setRemark] = useState("");
   const isOffice = toId === "__office__";
   function send() {
@@ -761,7 +770,6 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
         })}
       </div>
       <datalist id="sleeveopts"><option value="Full" /><option value="Half" /></datalist>
-      {/* Grand totals */}
       <div style={{ marginTop:14, background:T.bg, borderRadius:8, padding:"12px 16px", border:`1px solid ${T.border}` }}>
         {!detailed
           ? <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>GRAND TOTAL: {totalPcs} pcs &nbsp;·&nbsp; Fabric: {totalMeters(design)} m</div>
@@ -778,7 +786,6 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
       <div style={{ marginTop:14 }}>
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>Fabric Averages</div>
         <AveragesBlock design={design} />
-        <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:4 }}>Auto avg = (fabric {(design.colors||[]).reduce((a,c)=>a+(+c.meters||0),0)}m + trims {design.trims||0}) ÷ {totalPieces(design)} pcs — updates as sizes are filled.</div>
       </div>
       {!locked && onConfirmLock && (
         <div style={{ marginTop:16, display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
@@ -874,7 +881,6 @@ function SupplierBills({ design, onUpdate, role }) {
   const [lightbox, setLightbox] = useState(null);
   const bills = design.supplierBills || [];
   const upd = k => v => setForm(f => ({ ...f, [k]:v }));
-  function calcAmt(nf) { const ff = nf||form; return ((+ff.qty||0)*(+ff.rate||0)).toFixed(2); }
   function setQtyRate(k,v){ setForm(f => { const nf={...f,[k]:v}; nf.amount = ((+nf.qty||0)*(+nf.rate||0))?String(((+nf.qty||0)*(+nf.rate||0))):nf.amount; return nf; }); }
   function addBill() {
     if (!form.supplier) return;
@@ -1102,7 +1108,6 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
             const jName = jobber?.name || "—";
             const prefix = proc.prefix || codeForProcess(jobber, p);
             const code = buildCode(prefix, proc.rate);
-            const colspan = isAdmin ? 8 : 3;
             return (
               <Fragment key={p}>
                 <tr style={{ background:i%2===0?T.card:T.surface, borderBottom: splits.length?`none`:`1px solid ${T.border}` }}>
@@ -1396,7 +1401,7 @@ function rowToB(r) {
   return { id:r.id, customer:r.customer||"", designNo:r.design_no||"", color:r.color||"", sizes:r.sizes||{}, bookingDate:r.booking_date||"", deliveryDate:r.delivery_date||"", notes:r.notes||"", total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
 }
 
-// ── Bills & Payments converters ───────────────────────────────────────────────
+// ── Bills + Payments converters ───────────────────────────────────────────────
 function billToRow(b) {
   return { id:b.id, jobber_id:b.jobberId||"", bill_no:b.billNo||"", bill_date:b.billDate||"", lines:b.lines||[], gross:b.gross||0, gst_pct:b.gstPct??5, gst_amt:b.gstAmt||0, round_off:b.roundOff||0, total:b.total||0, has_gst:!!b.hasGst, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"" };
 }
@@ -1446,7 +1451,7 @@ function recordNotification(who, message, designId) {
 
 function BookingsPanel({ bookings, setBookings, showToast, currentUser }) {
   const [form, setForm] = useState({ customer:"", designNo:"", color:"", sizes:{}, bookingDate:"", deliveryDate:"", notes:"" });
-  const [view, setView] = useState("list"); // list | summary
+  const [view, setView] = useState("list");
   const upd = k => v => setForm(f => ({ ...f, [k]:v }));
   function updSize(s, v) { setForm(f => ({ ...f, sizes:{ ...f.sizes, [s]:v } })); }
 
@@ -1466,7 +1471,6 @@ function BookingsPanel({ bookings, setBookings, showToast, currentUser }) {
     showToast("Booking deleted");
   }
 
-  // Summary: group by designNo + color + size
   const byDesign = {};
   bookings.forEach(b => {
     if (!byDesign[b.designNo]) byDesign[b.designNo] = {};
@@ -1633,11 +1637,9 @@ function BarcodePanel({ design, jobbers, onUpdate }) {
         <Btn label="Save Barcode Data" onClick={save} />
       </div>
 
-      {/* Barcode preview */}
       <div style={{ background:"#fff", borderRadius:10, padding:"20px 24px", maxWidth:420, margin:"0 auto", boxShadow:"0 4px 20px #0006" }}>
         <div style={{ textAlign:"center", fontFamily:T.mono, fontSize:13, fontWeight:700, color:"#000", letterSpacing:1, marginBottom:6 }}>{topLine || "—"}</div>
         <div style={{ display:"flex", justifyContent:"center", gap:1.5, height:60, alignItems:"stretch", marginBottom:6 }}>
-          {/* fake barcode bars from the top line */}
           {(topLine.replace(/\s/g,"") || "00000000").split("").map((ch,i) => {
             const w = (ch.charCodeAt(0) % 3) + 1;
             return <div key={i} style={{ width:w, background:"#000" }} />;
@@ -1664,7 +1666,6 @@ function BarcodePanel({ design, jobbers, onUpdate }) {
 function ProductionFlow({ design, jobbers }) {
   const jname = id => jobbers.find(j => j.id===id)?.name || id || "—";
   const rows = [];
-  // From Process Register (main + splits)
   PROCESSES.forEach(p => {
     const pr = (design.processes||{})[p];
     if (pr && pr.jobber) {
@@ -1674,11 +1675,9 @@ function ProductionFlow({ design, jobbers }) {
       if (sp.jobber) rows.push({ kind:"process", date: sp.recdDate||"", process:`${p}${sp.label?(" · "+sp.label):""}`, jobber:jname(sp.jobber), from:"", to:"", qty:"", recd:sp.recdDate||"", dlvd:sp.dlvdDate||"", days:daysBetween(sp.recdDate,sp.dlvdDate) });
     });
   });
-  // From Movement Log (hand-offs)
   (design.movements||[]).forEach(m => {
     rows.push({ kind:"move", date:m.date||"", process:"Movement", jobber:m.jobber||"", from:m.receivedFrom||"", to:m.sentTo||"", qty:m.qty||"", recd:"", dlvd:"", days:null, remark:m.remark||"" });
   });
-  // sort by date ascending; blank dates last
   rows.sort((a,b) => { if(!a.date) return 1; if(!b.date) return -1; return a.date.localeCompare(b.date); });
 
   return (
@@ -1726,7 +1725,6 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
   const isAdmin = role === "admin";
   const isTeam = role === "team";
   const isJobber = role === "jobber";
-  // Jobbers can view Job Sheet (job register) and fill sizes
   const DTABS = isJobber
     ? ["Fill Sizes","Job Sheet","Flow","Photos"]
     : ["Job Sheet","Fill Sizes","Flow","Customer Orders","Photos","Movement","Supplier Bills",...(isAdmin?["Process Register","Cost Sheet","MRP","Barcode","Pending Approvals"]:[])];
@@ -1734,8 +1732,6 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
 
   async function save(updated) {
     let stamped = { ...updated, editedBy: currentUser, editedAtStr: nowStr() };
-    // Auto-assign: if a jobber is working on this design, ensure they are set on their process.
-    // The one who logs the work is taken (handles reassignment due to workload).
     if (role === "jobber" && currentJobber) {
       const pn = currentJobber.process;
       if (pn && PROCESSES.includes(pn)) {
@@ -1932,7 +1928,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   function removeFabricBill(id) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).filter(b => b.id!==id)})); }
   function fabricBillPhoto(id, file) { if(!file) return; compressImage(file).then(src => updFabricBill(id,"photo",src)).catch(()=>{}); }
   function toggleSize(s) { setD(f => ({...f, activeColors:f.activeColors.includes(s)?f.activeColors.filter(x=>x!==s):[...f.activeColors,s]})); }
-  function ensureSpecs(arr) { const have = (arr||[]).map(x=>x.key); return SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"" }); }
+  function ensureSpecs(arr) { return SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"" }); }
   function updSpec(key, field, v) { setD(f => ({ ...f, specs: ensureSpecs(f.specs).map(sp => sp.key===key ? {...sp,[field]:v} : sp) })); }
   function updRatio(sz, v) { setD(f => ({ ...f, ratio: { ...(f.ratio||{}), [sz]: v } })); }
   function updManualAvg(k, v) { setD(f => ({ ...f, manualAvg: { ...(f.manualAvg||{}), [k]: v } })); }
@@ -1949,21 +1945,18 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
     if (validBills.length === 0) { alert("Please add at least one Fabric Supplier Bill (supplier + quantity) before creating the design."); return; }
     setSaving(true); await onSave({ ...d, formOrder: secOrder }); setSaving(false);
   }
-  const chk = (label, key) => (
-    <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", color:T.text, fontSize:12 }}>
-      <input type="checkbox" checked={d[key]} onChange={tog(key)} style={{ accentColor:T.gold, width:14, height:14 }} />
-      {label}
-    </label>
-  );
   const G = { display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12, marginBottom:12 };
+  const dragHandle = (key) => ({ draggable:true, onDragStart:()=>setDragKey(key), onDragOver:e=>e.preventDefault(), onDrop:()=>onDrop(key), style:{ order: secOrder.indexOf(key), border: dragKey===key?`1px dashed ${T.gold}`:"none", borderRadius:8 } });
+  const handleBar = <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>;
   return (
     <div style={{ fontFamily:T.sans }}>
     <div style={{ display:"flex", flexDirection:"column" }}>
-      <div draggable onDragStart={()=>setDragKey("identity")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("identity")} style={{ order: secOrder.indexOf("identity"), border: dragKey==="identity"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("identity")}>
+        {handleBar}
       <Section title="Design Identity">
         <div style={G}>
           <Inp label="Design Number *" value={d.designNo} onChange={upd("designNo")} placeholder="e.g. 2084" />
+          <Inp label="Lot No (this run)" value={d.lotNo} onChange={upd("lotNo")} placeholder="e.g. 3290" />
           <Inp label="Brand" value={d.brand} onChange={upd("brand")} />
           <Inp label="Style" value={d.style} onChange={upd("style")} />
           <Inp label="Fabric" value={d.fabric} onChange={upd("fabric")} />
@@ -1984,8 +1977,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("avg")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("avg")} style={{ order: secOrder.indexOf("avg"), border: dragKey==="avg"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("avg")}>
+        {handleBar}
       <Section title="Fabric Average — Manual Entry">
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>Auto average = (fabric + trims) ÷ pieces, calculated automatically when sizes are filled. Below are your manual averages per size group.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))", gap:12 }}>
@@ -1999,8 +1992,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("specs")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("specs")} style={{ order: secOrder.indexOf("specs"), border: dragKey==="specs"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("specs")}>
+        {handleBar}
       <Section title="Pattern / Garment Specifications">
         <div style={G}>
           <Inp label="Collar Type" value={d.collarType} onChange={upd("collarType")} options={COLLARS} />
@@ -2022,8 +2015,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("sizes")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("sizes")} style={{ order: secOrder.indexOf("sizes"), border: dragKey==="sizes"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("sizes")}>
+        {handleBar}
       <Section title="Active Sizes (which sizes apply)">
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           {SIZES.map(s => (
@@ -2033,8 +2026,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         <div style={{ marginTop:8, fontFamily:T.mono, fontSize:10, color:T.textDim }}>Note: actual cut quantities per size are filled later by the jobber.</div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("ratio")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("ratio")} style={{ order: secOrder.indexOf("ratio"), border: dragKey==="ratio"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("ratio")}>
+        {handleBar}
       <Section title="Size Ratio (per size)">
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
           {d.activeColors.map(sz => (
@@ -2047,8 +2040,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         <div style={{ marginTop:6, fontFamily:T.mono, fontSize:10, color:T.textDim }}>Ratio for each size (e.g. S=1, M=2, L=2, XL=1).</div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("colors")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("colors")} style={{ order: secOrder.indexOf("colors"), border: dragKey==="colors"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("colors")}>
+        {handleBar}
       <Section title="Color Swatches" action={<Btn label="+ Add Color" onClick={addColor} small />}>
         {d.colors.length === 0 && <div style={{ color:T.textDim, fontSize:12 }}>No colors added yet. Add a swatch photo and name for each fabric color.</div>}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12 }}>
@@ -2070,8 +2063,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("fabricbill")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("fabricbill")} style={{ order: secOrder.indexOf("fabricbill"), border: dragKey==="fabricbill"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("fabricbill")}>
+        {handleBar}
       <Section title="Fabric Supplier Bill (required)" action={<Btn label="+ Add Fabric Bill" onClick={addFabricBill} small />}>
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>Enter fabric purchase details here. This flows automatically to Fabric Purchases and the cost sheet. At least one bill is required.</div>
         {(d.supplierBills||[]).length===0 && <div style={{ color:T.orange, fontSize:12, marginBottom:8 }}>⚠ Add at least one fabric supplier bill.</div>}
@@ -2121,8 +2114,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         })()}
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("photos")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("photos")} style={{ order: secOrder.indexOf("photos"), border: dragKey==="photos"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("photos")}>
+        {handleBar}
       <Section title="Shirt Photos & Details">
         <div style={{ display:"flex", gap:10, marginBottom:14, alignItems:"flex-end" }}>
           <Inp label="Photo Note / Detail" value={photoNote} onChange={setPhotoNote} placeholder="e.g. Front view — collar detail" style={{ flex:1 }} />
@@ -2141,8 +2134,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("process")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("process")} style={{ order: secOrder.indexOf("process"), border: dragKey==="process"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("process")}>
+        {handleBar}
       <Section title="Process Assignments (optional — can fill later)">
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:12 }}>Assign a jobber for each process now, or leave blank — it can be set later, or auto-fills when a jobber logs their work.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
@@ -2152,8 +2145,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
         </div>
       </Section>
       </div>
-      <div draggable onDragStart={()=>setDragKey("note")} onDragOver={e=>e.preventDefault()} onDrop={()=>onDrop("note")} style={{ order: secOrder.indexOf("note"), border: dragKey==="note"?`1px dashed ${T.gold}`:"none", borderRadius:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6, cursor:"grab", color:T.steelLt, fontFamily:T.mono, fontSize:9, padding:"2px 0" }}>⋮⋮ drag to reorder</div>
+      <div {...dragHandle("note")}>
+        {handleBar}
       <Section title="Common Note / Pattern Instructions">
         <textarea value={d.notes} onChange={e => upd("notes")(e.target.value)} placeholder="What pattern to make, special instructions..." style={{ width:"100%", minHeight:80, background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:10, boxSizing:"border-box", resize:"vertical" }} />
       </Section>
@@ -2170,7 +2163,6 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
 // ── Fabric Purchases (master view across all designs + monthly totals) ────────
 function FabricPurchases({ designs }) {
   const [monthFilter, setMonthFilter] = useState("");
-  // gather all fabric bills across designs
   const all = [];
   designs.forEach(d => (d.supplierBills||[]).forEach(b => all.push({ ...b, designNo: b.designNo||d.designNo })));
   all.sort((a,b) => (b.billDate||"").localeCompare(a.billDate||""));
@@ -2178,7 +2170,6 @@ function FabricPurchases({ designs }) {
   const filtered = monthFilter ? all.filter(b => monthKey(b.billDate)===monthFilter) : all;
   const totQty = filtered.reduce((a,b)=>a+(+b.qty||0),0);
   const totAmt = filtered.reduce((a,b)=>a+(+b.amount||0),0);
-  // monthly summary
   const byMonth = {};
   all.forEach(b => { const m = monthKey(b.billDate)||"(no date)"; if(!byMonth[m]) byMonth[m]={qty:0,amt:0}; byMonth[m].qty+=(+b.qty||0); byMonth[m].amt+=(+b.amount||0); });
   return (
@@ -2195,7 +2186,6 @@ function FabricPurchases({ designs }) {
           {months.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
-      {/* Monthly summary */}
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Monthly Purchase Summary</div>
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, marginBottom:20 }}>
         <thead><tr style={{ background:T.surface }}>{["Month","Quantity (m)","Amount"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
@@ -2209,7 +2199,6 @@ function FabricPurchases({ designs }) {
           ))}
         </tbody>
       </table>
-      {/* Detailed list */}
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>All Fabric Bills</div>
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
@@ -2272,7 +2261,6 @@ function ActivityLog({ log }) {
 function JobberDesigns({ jobber, designs, onClose }) {
   const [showRate, setShowRate] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
-  // find designs where this jobber did any process (main or split)
   const rows = [];
   designs.forEach(d => {
     PROCESSES.forEach(p => {
@@ -2313,7 +2301,7 @@ function JobberDesigns({ jobber, designs, onClose }) {
 }
 
 // ── People Manager (Jobbers + Team Members) ───────────────────────────────────
-const BLANK_P = { name:"", pin:"", process:"", prefix:"", processCodes:[], phone:"", gst:"", address:"", email:"", role:"jobber", contacts:[] };
+const BLANK_P = { name:"", pin:"", process:"", prefix:"", processCodes:[], phone:"", gst:"", address:"", email:"", role:"jobber", contacts:[], sizeFiller:false };
 function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(BLANK_P);
@@ -2341,11 +2329,9 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
   async function save() {
     if (!form.name.trim()) { showToast("Name is required","error"); return; }
     if (!form.pin || String(form.pin).length < 4) { showToast("PIN must be at least 4 digits","error"); return; }
-    // warn if PIN already used by a different person
     const editingId = (modal && modal.id) ? modal.id : null;
     const clash = people.find(p => String(p.pin)===String(form.pin) && p.id!==editingId);
     if (clash) { showToast(`PIN already used by ${clash.name}. Choose a different PIN.`,"error"); return; }
-    // keep legacy process/prefix in sync with first ticked process (for compatibility)
     const first = (form.processCodes||[])[0];
     if (first) { form.process = first.process; form.prefix = first.code; }
     setSaving(true);
@@ -2438,6 +2424,12 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
           </div>
           <div style={{ marginBottom:12 }}><Inp label="Address / Shop" value={form.address||""} onChange={upd("address")} /></div>
           {form.role==="jobber" && (
+            <label style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, cursor:"pointer", fontFamily:T.sans, fontSize:13, color:T.text }}>
+              <input type="checkbox" checked={!!form.sizeFiller} onChange={e => upd("sizeFiller")(e.target.checked)} style={{ width:18, height:18, accentColor:T.gold }} />
+              This jobber fills the size grid (cutter / stitcher). Others only record their work & pass on.
+            </label>
+          )}
+          {form.role==="jobber" && (
             <div style={{ marginBottom:16 }}>
               <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8, marginBottom:8 }}>Processes & Barcode Codes (tick each work this person does)</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:8 }}>
@@ -2495,8 +2487,6 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
     </div>
   );
 }
-
-
 
 // ── Challans (jobber-entered, admin-approved; feeds bills) ─────────────────────
 function ChallansPanel({ jobbers, designs, challans, setChallans, showToast, currentUser, role }) {
@@ -2640,14 +2630,13 @@ function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fix
 // ── Bills + Payments + Dual Ledger ────────────────────────────────────────────
 function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments, challans, setChallans, showToast, currentUser }) {
   const [selJ, setSelJ] = useState("");
-  const [ledgerView, setLedgerView] = useState("bank"); // bank | cash | combined
+  const [ledgerView, setLedgerView] = useState("bank");
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
   const [showBillForm, setShowBillForm] = useState(false);
   const [showPayForm, setShowPayForm] = useState(false);
   const jList = jobbers.filter(j => j.role==="jobber");
   const j = jobbers.find(x => x.id===selJ);
 
-  // suggested rate from design process for this jobber
   function suggestForDesign(designNo) {
     const d = designs.find(x => x.designNo === designNo);
     if (!d) return { qty:"", rate:"" };
@@ -2663,13 +2652,11 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const myBills = allMyBills.filter(b => yearOf(b.billDate)===yearFilter);
   const myPays = allMyPays.filter(p => yearOf(p.date)===yearFilter);
 
-  // split
   const bankBills = myBills.filter(b => b.hasGst);
   const cashBills = myBills.filter(b => !b.hasGst);
   const bankPays = myPays.filter(p => p.channel==="bank");
   const cashPays = myPays.filter(p => p.channel==="cash");
 
-  const sum = arr => arr.reduce((a,x) => a+(+x.total||+x.amount||0), 0);
   const bankBilled = bankBills.reduce((a,b)=>a+(+b.total||0),0);
   const cashBilled = cashBills.reduce((a,b)=>a+(+b.total||0),0);
   const bankPaid = bankPays.reduce((a,p)=>a+(+p.amount||0),0);
@@ -2725,7 +2712,6 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             <Btn label="Export PDF" onClick={exportPDF} color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.gold}44` }} />
           </div>
 
-          {/* Ledger view toggle (cash hidden by default — separate toggle) + year */}
           <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
             {[["bank","Bank (GST)"],["combined","Combined"],["cash","Cash"]].map(([v,lbl]) => (
               <button key={v} onClick={() => setLedgerView(v)} style={{ background:ledgerView===v?T.gold:T.surface, color:ledgerView===v?T.bg:T.steelLt, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>{lbl}</button>
@@ -2735,7 +2721,6 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             </select>
           </div>
 
-          {/* Balance cards */}
           <div style={{ display:"flex", gap:14, marginBottom:18, flexWrap:"wrap" }}>
             {(ledgerView==="bank" || ledgerView==="combined") && (
               <div style={{ background:T.surface, borderRadius:8, padding:"14px 18px", borderLeft:`3px solid ${T.gold}`, minWidth:180 }}>
@@ -2753,7 +2738,6 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             )}
           </div>
 
-          {/* Bills table */}
           <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Bills</div>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, marginBottom:20 }}>
             <thead><tr style={{ background:T.surface }}>{["Date","Bill No","Designs","Type","Total",""].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
@@ -2771,7 +2755,6 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             </tbody>
           </table>
 
-          {/* Payments table */}
           <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Payments</div>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
             <thead><tr style={{ background:T.surface }}>{["Date","Mode","Channel","Note","Amount",""].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
@@ -2816,7 +2799,6 @@ function BillForm({ jobber, designs, selJ, suggestForDesign, challans = [], onCl
   function toggleChallan(id) { setSelChallans(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id]); }
   function selectAllChallans() { setSelChallans(challans.map(c=>c.id)); }
   function clearChallans() { setSelChallans([]); }
-  // build lines from selected challans (in addition to manual lines)
   const challanLines = challans.filter(c => selChallans.includes(c.id)).map(c => ({ id:c.id, designNo:c.designNo, qty:c.qty, rate:c.rate, amount:c.amount, fromChallan:true }));
   const [gstPct, setGstPct] = useState("5");
   const [hasGst, setHasGst] = useState(true);
@@ -3122,6 +3104,13 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           );
         })}
       </div>
+      {showChallan && <ChallanForm jobbers={people} designs={designs} role="jobber" currentUser={user.name} fixedJobber={user.id} onClose={()=>setShowChallan(false)} onSave={async (c) => {
+        await dbUpsert("challans", challanToRow(c));
+        setChallans(p => [c,...p]);
+        recordNotification(user.name, `New challan — Design ${c.designNo} by ${user.name} (${c.qty} pcs) — needs approval`, "");
+        showToast("Challan submitted for approval ✓");
+        setShowChallan(false);
+      }} />}
       <Toast {...toast} />
     </div>
   );
@@ -3164,7 +3153,6 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
   const inProgress = designs.filter(d => d.status==="In Progress").length;
   const mrpPending = designs.filter(d => !d.mrpFinalized && d.status!=="Completed").length;
   const completed = designs.filter(d => d.status==="Completed").length;
-  const jobberCount = people.filter(p => p.role==="jobber").length;
 
   const stats = [
     ["Total Designs", designs.length, T.gold],
@@ -3194,7 +3182,6 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
 
   return (
     <div>
-      {/* Summary strip */}
       <div style={{ display:"flex", gap:12, marginBottom:22, flexWrap:"wrap" }}>
         {stats.map(([l,v,c]) => (
           <div key={l} style={{ background:T.card, borderRadius:10, padding:"14px 20px", borderLeft:`3px solid ${c}`, minWidth:120, flex:"1 1 120px" }}>
@@ -3204,14 +3191,12 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
         ))}
       </div>
 
-      {/* Late alert */}
       {lateDesigns.length > 0 && (
         <div onClick={() => onGo("Designs")} style={{ background:T.red+"22", border:`1px solid ${T.red}`, borderRadius:10, padding:14, marginBottom:22, fontFamily:T.mono, fontSize:13, color:T.red, cursor:"pointer" }}>
           ⚠ {lateDesigns.length} design(s) over 60 days old — tap to view: {lateDesigns.map(d=>d.designNo).join(", ")}
         </div>
       )}
 
-      {/* Big tappable cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:14 }}>
         {cards.map(([title, sub, dest, color]) => (
           <div key={title} onClick={() => onGo(dest)} style={{ background:T.card, borderRadius:14, border:`1px solid ${T.border}`, borderTop:`4px solid ${color}`, padding:"22px 20px", cursor:"pointer", transition:"transform 0.1s" }}
@@ -3249,9 +3234,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     const d = designs.find(x => x.id===id);
     if (d) { setTab("Designs"); setSel(d); }
   }
-  // late designs = older than 60 days from creation and not completed
   const lateDesigns = designs.filter(d => d.status!=="Completed" && (ageDays(d.createdAtStr || d.dateProgram) ?? 0) > 60);
-  // month options from design dates
   const monthOptions = Array.from(new Set(designs.map(d => monthKey(d.createdAtStr||d.dateProgram)).filter(Boolean)));
   async function addJobberInline({ name, process, prefix }) {
     const id = "J" + String(Date.now()).slice(-6);
@@ -3474,7 +3457,6 @@ const ADMINS = [
 ];
 function Login({ people, onAdmin, onUser, loadInfo, onRefresh }) {
   const [mode, setMode] = useState("select");
-  const [selP, setSelP] = useState("");
   const [pin, setPin] = useState("");
   const [adminPin, setAdminPin] = useState("");
   const [err, setErr] = useState("");
@@ -3486,11 +3468,9 @@ function Login({ people, onAdmin, onUser, loadInfo, onRefresh }) {
     else setErr("Wrong admin PIN");
   }
   function tryUser() {
-    // PIN-only login: match within the chosen role (mode = "team" or "jobber")
     const matches = people.filter(x => x.role===mode && String(x.pin)===String(pin));
     if (matches.length === 0) { setErr("Wrong PIN"); return; }
     if (matches.length === 1) { onUser(matches[0]); return; }
-    // rare: duplicate PIN — ask which name
     setDupes(matches);
   }
   const PS = { background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontSize:20, textAlign:"center", letterSpacing:8, width:"100%", padding:"12px", boxSizing:"border-box", fontFamily:T.mono, marginBottom:12, outline:"none" };
@@ -3599,7 +3579,6 @@ export default function App() {
   if (auth.role === "jobber") {
     return <JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} onLogout={() => setAuth(null)} />;
   }
-  // admin or team
   return (
     <Workspace
       role={auth.role}
