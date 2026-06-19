@@ -2601,7 +2601,19 @@ function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fix
   return (
     <Modal title="New Challan" onClose={onClose}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-        <Inp label="Jobber *" value={form.jobberId} onChange={upd("jobberId")} options={jobbers.filter(j=>j.role==="jobber").map(j=>j.id)} />
+        {fixedJobber
+          ? <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Jobber</label>
+              <div style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.gold, fontFamily:T.sans, fontSize:13, padding:"8px 12px", fontWeight:600 }}>{(jobbers.find(j=>j.id===fixedJobber)||{}).name||""}</div>
+            </div>
+          : <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Jobber *</label>
+              <select value={form.jobberId} onChange={e => upd("jobberId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
+                <option value="">— select jobber —</option>
+                {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+              </select>
+            </div>
+        }
         <Inp label="Design No *" value={form.designNo} onChange={upd("designNo")} options={designs.map(d=>d.designNo)} />
         <Inp label="Process" value={form.process} onChange={upd("process")} options={PROCESSES} />
         <Inp label="Date" type="date" value={form.date} onChange={upd("date")} />
