@@ -11,7 +11,7 @@ async function dbSelect(table) {
     return r.json();
   } catch(e) { return []; }
 }
-async function dbUpsert(table, data) {
+async function dbUpsert(table, data, silent) {
   try {
     const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, {
       method: "POST",
@@ -22,13 +22,13 @@ async function dbUpsert(table, data) {
       let msg = "";
       try { msg = await r.text(); } catch(e) {}
       console.error(`SAVE FAILED [${table}] ${r.status}:`, msg);
-      if (typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Save failed (${table}): ${r.status} ${msg.slice(0,180)}`);
+      if (!silent && typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Save failed (${table}): ${r.status} ${msg.slice(0,180)}`);
       return { ok:false, status:r.status, msg };
     }
     return { ok:true };
   } catch(e) {
     console.error(`SAVE ERROR [${table}]:`, e);
-    if (typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Save error (${table}): ${e?.message||e}`);
+    if (!silent && typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Save error (${table}): ${e?.message||e}`);
     return { ok:false, error:e };
   }
 }
@@ -1322,8 +1322,12 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
 }
 
 // ── Cost Sheet ────────────────────────────────────────────────────────────────
-function DesignCostSheet({ design, jobbers }) {
+function DesignCostSheet({ design, jobbers, challans = [] }) {
   const totalPcs = (design.colors||[]).reduce((a,c) => a+Object.values(c.sizes||{}).reduce((x,v) => x+(+v||0), 0), 0);
+  // actual logged work for this design (from challans, not rejected)
+  const myCh = challans.filter(c => String(c.designNo)===String(design.designNo) && c.status!=="rejected");
+  const chTotal = myCh.reduce((a,c)=>a+(+c.amount||0),0);
+  const jn = id => (jobbers.find(j=>j.id===id)||{}).name || id || "—";
   let grand = 0;
   const fabricTotal = (design.supplierBills||[]).reduce((a,b) => a+(+b.amount||0), 0);
   grand += fabricTotal;
@@ -1338,6 +1342,34 @@ function DesignCostSheet({ design, jobbers }) {
         ))}
       </div>
       <div style={{ marginBottom:16 }}><AveragesBlock design={design} /></div>
+      {/* ACTUAL logged work from challans (each jobber's real entries) */}
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Actual Work Logged (from challans)</div>
+      {myCh.length===0
+        ? <div style={{ background:T.surface, borderRadius:8, padding:14, marginBottom:16, fontFamily:T.mono, fontSize:11, color:T.textDim }}>No work logged yet. Jobber challans for this design will appear here automatically.</div>
+        : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, marginBottom:16 }}>
+            <thead><tr style={{ background:T.surface }}>{["Date","Challan No","Design","Jobber","Task","Qty","Rate","Amount","Status"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {myCh.map((c,i) => (
+                <tr key={c.id||i} style={{ background:i%2===0?T.card:T.surface }}>
+                  <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.date}</td>
+                  <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.challanNo||"—"}</td>
+                  <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>{c.designNo}</td>
+                  <td style={{ padding:"8px 10px", color:T.white, fontWeight:600, border:`1px solid ${T.border}` }}>{jn(c.jobberId)}{c.isSplit && <Badge label="split" color={T.steelLt} />}</td>
+                  <td style={{ padding:"8px 10px", color:T.gold, border:`1px solid ${T.border}` }}>{c.process||"—"}</td>
+                  <td style={{ padding:"8px 10px", color:T.text, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.qty}</td>
+                  <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}` }}>Rs.{c.rate}</td>
+                  <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>Rs.{c.amount}</td>
+                  <td style={{ padding:"8px 10px", border:`1px solid ${T.border}` }}><Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} /></td>
+                </tr>
+              ))}
+              <tr style={{ background:T.bg }}>
+                <td colSpan={7} style={{ padding:"10px", fontFamily:T.mono, fontWeight:700, color:T.gold, border:`1px solid ${T.border}` }}>TOTAL LABOUR (logged)</td>
+                <td colSpan={2} style={{ padding:"10px", fontFamily:T.mono, fontWeight:900, color:T.gold, fontSize:14, border:`1px solid ${T.border}` }}>Rs.{chTotal.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+      }
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Planned Rates (from process register)</div>
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
         <thead>
           <tr style={{ background:T.surface }}>
@@ -1563,7 +1595,7 @@ let _logSink = null;
 function recordActivity(who, action, target, detail) {
   const entry = { id:`LOG${Date.now()}${Math.floor(Math.random()*1000)}`, ts:nowStr(), who:who||"", action:action||"", target:target||"", detail:detail||"" };
   if (_logSink) _logSink(entry);
-  dbUpsert("activity_log", logToRow(entry));
+  dbUpsert("activity_log", logToRow(entry), true);
 }
 
 function notifToRow(n) {
@@ -1592,16 +1624,16 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
 }
 function rowToChallan(r) {
-  return { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  return { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
 }
 let _notifSink = null;
 function recordNotification(who, message, designId) {
   const entry = { id:`NOT${Date.now()}${Math.floor(Math.random()*1000)}`, ts:nowStr(), who:who||"", message:message||"", designId:designId||"", readBy:[] };
   if (_notifSink) _notifSink(entry);
-  dbUpsert("notifications", notifToRow(entry));
+  dbUpsert("notifications", notifToRow(entry), true);
 }
 
 function BookingsPanel({ bookings, setBookings, showToast, currentUser }) {
@@ -1876,7 +1908,7 @@ function ProductionFlow({ design, jobbers }) {
 }
 
 // ── Design Detail (tabbed) ────────────────────────────────────────────────────
-function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people }) {
+function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people, challans = [] }) {
   const isAdmin = role === "admin";
   const isTeam = role === "team";
   const isJobber = role === "jobber";
@@ -1996,7 +2028,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
       {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-proc" title={`Process Register ${design.designNo}`} />}><div id="rpt-proc"><ProcessRegister design={design} jobbers={jobbers} onUpdate={updProcess} role={role} /></div></Section>}
-      {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} /></div></Section>}
+      {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} challans={challans} /></div></Section>}
       {dt==="MRP" && isAdmin && <Section title="MRP & Product Codes"><MRPPanel design={design} onUpdate={save} /></Section>}
       {dt==="Barcode" && isAdmin && <Section title="Barcode Generator"><BarcodePanel design={design} jobbers={jobbers} onUpdate={save} /></Section>}
       {dt==="Pending Approvals" && isAdmin && <Section title="Pending Approvals"><PendingApprovals design={design} jobbers={jobbers} onApprove={approveEntry} onReject={rejectEntry} /></Section>}
@@ -2350,12 +2382,13 @@ function FabricPurchases({ designs }) {
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>All Fabric Bills</div>
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-          <thead><tr style={{ background:T.surface }}>{["Sr","Bill Date","Particulars","Design","Qty","Rate","Amount","LR No"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
+          <thead><tr style={{ background:T.surface }}>{["Sr","Bill Date","Bill No","Particulars","Design","Qty","Rate","Amount","LR No"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
           <tbody>
             {filtered.map((b,i) => (
               <tr key={b.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(b.billDate)}` }}>
                 <td style={{ padding:"8px 10px", fontFamily:T.mono, color:T.steelLt }}>{i+1}</td>
                 <td style={{ padding:"8px 10px", color:T.steelLt }}>{b.billDate||"—"}</td>
+                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, fontWeight:700 }}>{b.billNo||"—"}</td>
                 <td style={{ padding:"8px 10px", color:T.white, fontWeight:600 }}>{b.supplier}</td>
                 <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{b.designNo}</td>
                 <td style={{ padding:"8px 10px", color:T.text, fontFamily:T.mono }}>{b.qty||"—"}</td>
@@ -2734,7 +2767,7 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, sh
       </div>
       {list.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No challans.</div>}
 
-      {showForm && <ChallanForm jobbers={jobbers} designs={designs} role={role} currentUser={currentUser} onClose={()=>setShowForm(false)} onSave={async (c) => {
+      {showForm && <ChallanForm jobbers={jobbers} designs={designs} challans={challans} role={role} currentUser={currentUser} onClose={()=>setShowForm(false)} onSave={async (c) => {
         if (c.newDesign && !designs.some(d => String(d.designNo)===String(c.designNo))) {
           const nd = makePlaceholderDesign(c, currentUser);
           await dbUpsert("designs", dToRow(nd));
@@ -2744,33 +2777,49 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, sh
         }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
+        if (c.sendToId) {
+          const targetName = c.sendToId==="__office__" ? "Office / Admin" : ((jobbers.find(j=>j.id===c.sendToId)||{}).name||"");
+          const design = designs.find(d => String(d.designNo)===String(c.designNo));
+          if (design) {
+            const mv = { id:`MV${Date.now()}`, date:c.date||new Date().toISOString().slice(0,10), jobber:jname(c.jobberId), receivedFrom:jname(c.jobberId), sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:+c.qty, remark:`After ${c.process||"work"}`, status:"sent" };
+            const updated = { ...design, movements:[...(design.movements||[]), mv] };
+            setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+            await dbUpsert("movements", mvToRow(mv, design.id));
+            recordNotification(currentUser, `Design ${c.designNo} sent to ${targetName} (${c.qty} pcs)`, design.id);
+          }
+        }
         recordActivity(currentUser, "Added challan", `Design ${c.designNo}`, `${jname(c.jobberId)} · ${c.qty} pcs`);
-        recordNotification(currentUser, `New challan — Design ${c.designNo} by ${jname(c.jobberId)} (${c.qty} pcs)${role!=="admin"?" — needs approval":""}`, "");
-        showToast(role==="admin" ? "Challan added ✓" : "Challan submitted for approval ✓");
+        showToast(c.sendToId ? "Challan saved & sent ✓" : "Challan added ✓");
         setShowForm(false);
       }} />}
     </div>
   );
 }
 
-function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fixedJobber }) {
+function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClose, onSave, fixedJobber }) {
   const isAdmin = role === "admin";
-  const [form, setForm] = useState({ jobberId: fixedJobber||"", designNo:"", process:"", qty:"", rate:"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"" });
+  const [form, setForm] = useState({ jobberId: fixedJobber||"", designNo:"", process:"", qty:"", rate:"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"", isSplit:false });
   const [newDesignMode, setNewDesignMode] = useState(false);
   const upd = k => v => setForm(f => ({ ...f, [k]:v }));
   const amount = (+form.qty||0) * (+form.rate||0);
-  // who is creating? admin can always add new; a jobber needs the canCreateDesign permission
   const actingJobber = jobbers.find(j => j.id === (fixedJobber || form.jobberId));
   const mayCreateDesign = isAdmin || (actingJobber && actingJobber.canCreateDesign);
-  // is the typed design number actually new (not in the list)?
   const designExists = designs.some(d => String(d.designNo) === String(form.designNo).trim());
   const isNewDesign = newDesignMode && form.designNo.trim() && !designExists;
+  // DUPLICATE CHECK: has this same task already been logged on this design by someone else (and not rejected)?
+  const dupChallan = (form.designNo && form.process)
+    ? challans.find(c => String(c.designNo)===String(form.designNo).trim() && c.process===form.process && c.status!=="rejected" && c.jobberId!==form.jobberId)
+    : null;
+  const dupBlocked = dupChallan && !form.isSplit;
+  // how many pieces this jobber received (from a movement sent to them on this design)
   function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => upd("photo")(src)).catch(()=>{}); }
   const photoRef = useRef();
   function save() {
     if (!form.jobberId || !form.designNo || !form.qty) return;
-    onSave({ ...form, designNo: form.designNo.trim(), id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status: isAdmin?"approved":"pending", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesign: isNewDesign });
+    if (dupBlocked) return;
+    onSave({ ...form, designNo: form.designNo.trim(), id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesign: isNewDesign });
   }
+  const dupJobberName = dupChallan ? ((jobbers.find(j=>j.id===dupChallan.jobberId)||{}).name||"another jobber") : "";
   return (
     <Modal title="New Challan (v2)" onClose={onClose}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
@@ -2817,10 +2866,32 @@ function ChallanForm({ jobbers, designs, role, currentUser, onClose, onSave, fix
         {form.photo && <img src={form.photo} alt="" style={{ width:40, height:40, borderRadius:4, objectFit:"cover" }} />}
         <input ref={photoRef} type="file" accept="image/*" style={{ display:"none" }} onChange={handlePhoto} />
       </div>
-      {!isAdmin && <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginBottom:12 }}>This challan will be submitted for admin approval.</div>}
+      {/* Send to next jobber */}
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+        <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Send To Next (after this work)</label>
+        <select value={form.sendToId} onChange={e => upd("sendToId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
+          <option value="">— no one / finished —</option>
+          <option value="__office__">🏢 Office / Admin</option>
+          {jobbers.filter(j=>j.role==="jobber" && j.id!==form.jobberId).map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
+        </select>
+      </div>
+      {/* Duplicate-task warning + split option */}
+      {dupChallan && (
+        <div style={{ background:(form.isSplit?T.green:T.red)+"22", border:`1px solid ${form.isSplit?T.green:T.red}`, borderRadius:8, padding:12, marginBottom:12 }}>
+          <div style={{ fontFamily:T.mono, fontSize:11, color:form.isSplit?T.green:T.red, fontWeight:700, marginBottom:6 }}>
+            ⚠ {dupJobberName} already logged "{form.process}" on design {form.designNo}.
+          </div>
+          <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontFamily:T.sans, fontSize:12, color:T.text }}>
+            <input type="checkbox" checked={!!form.isSplit} onChange={e => upd("isSplit")(e.target.checked)} style={{ width:16, height:16, accentColor:T.gold }} />
+            This is a genuine SPLIT (e.g. one cuts, one stitches) — allow both entries.
+          </label>
+          {!form.isSplit && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:6 }}>Blocked to prevent a duplicate. Tick the box above only if it's a real split.</div>}
+        </div>
+      )}
+      {!isAdmin && <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginBottom:12 }}>This challan auto-posts to the cost sheet & your ledger now. Admin can reject it later if wrong.</div>}
       <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
         <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
-        <Btn label="Save Challan" onClick={save} disabled={!form.jobberId||!form.designNo||!form.qty} />
+        <Btn label="Save Challan" onClick={save} disabled={!form.jobberId||!form.designNo||!form.qty||dupBlocked} />
       </div>
     </Modal>
   );
@@ -2861,11 +2932,42 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const bankPaid = bankPays.reduce((a,p)=>a+(+p.amount||0),0);
   const cashPaid = cashPays.reduce((a,p)=>a+(+p.amount||0),0);
 
+  // ── AUTO LEDGER: built directly from challans (debit) + payments (credit) ──
+  const myChallans = (challans||[]).filter(c => c.jobberId===selJ && c.status!=="rejected" && yearOf(c.date)===yearFilter);
+  const acctRows = [
+    ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Design ${c.designNo} — ${c.process||"work"}`, ref:c.challanNo||"", debit:+c.amount||0, credit:0 })),
+    ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+  ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
+  let runBal = 0;
+  const acctWithBal = acctRows.map(r => { runBal += r.debit - r.credit; return { ...r, balance:runBal }; });
+  const acctDebit = acctRows.reduce((a,r)=>a+r.debit,0);
+  const acctCredit = acctRows.reduce((a,r)=>a+r.credit,0);
+
   async function deleteBill(id) { await dbDelete("bills", id); setBills(p=>p.filter(b=>b.id!==id)); recordActivity(currentUser, "Deleted bill", `Jobber ${j?.name||""}`, ""); showToast("Bill deleted"); }
   async function deletePay(id) { await dbDelete("payments", id); setPayments(p=>p.filter(x=>x.id!==id)); recordActivity(currentUser, "Deleted payment", `Jobber ${j?.name||""}`, ""); showToast("Payment deleted"); }
 
+  function exportAccountPDF() {
+    const w = window.open("", "_blank");
+    if (!w) { showToast("Allow popups to export PDF","error"); return; }
+    const rows = acctWithBal.map(r => `<tr><td>${r.date||""}</td><td>${r.particulars}</td><td>${r.ref||""}</td><td style="text-align:right">${r.debit?r.debit.toFixed(2):""}</td><td style="text-align:right;color:#0a0">${r.credit?r.credit.toFixed(2):""}</td><td style="text-align:right;font-weight:bold">${r.balance.toFixed(2)}</td></tr>`).join("");
+    w.document.write(`
+      <html><head><title>Account - ${j?.name||""}</title>
+      <style>body{font-family:Arial;padding:24px;color:#111}h1{font-size:20px;margin:0}h2{font-size:13px;color:#555;margin:4px 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#f0f0f0}</style>
+      </head><body>
+      <h1>AASHISH APPARELS</h1>
+      <h2>Account Statement (from challans) &middot; Jobber: ${j?.name||""} ${j?.gst?("&middot; GST: "+j.gst):""} &middot; Year: ${yearFilter} &middot; Printed: ${new Date().toLocaleDateString()}</h2>
+      <table><thead><tr><th>Date</th><th>Particulars</th><th>Challan/Ref</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th><th style="text-align:right">Balance</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan=6>No entries</td></tr>'}</tbody>
+      <tfoot><tr style="font-weight:bold;background:#f8f8f8"><td colspan=3>TOTAL</td><td style="text-align:right">${acctDebit.toFixed(2)}</td><td style="text-align:right">${acctCredit.toFixed(2)}</td><td style="text-align:right">${(acctDebit-acctCredit).toFixed(2)}</td></tr></tfoot>
+      </table>
+      </body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 300);
+  }
+
   function exportPDF() {
     const which = ledgerView;
+    if (which==="account") { exportAccountPDF(); return; }
     const header = which==="cash" ? "AA" : "AASHISH APPARELS";
     const title = which==="bank" ? "Bank Ledger (GST Bills)" : which==="cash" ? "Cash Ledger" : "Combined Ledger";
     const billsList = which==="bank" ? bankBills : which==="cash" ? cashBills : myBills;
@@ -2912,7 +3014,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
           </div>
 
           <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
-            {[["bank","Bank (GST)"],["combined","Combined"],["cash","Cash"]].map(([v,lbl]) => (
+            {[["account","Account (auto)"],["bank","Bank (GST)"],["combined","Combined"],["cash","Cash"]].map(([v,lbl]) => (
               <button key={v} onClick={() => setLedgerView(v)} style={{ background:ledgerView===v?T.gold:T.surface, color:ledgerView===v?T.bg:T.steelLt, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>{lbl}</button>
             ))}
             <select value={yearFilter} onChange={e => setYearFilter(+e.target.value)} style={{ marginLeft:"auto", background:T.surface, border:`1px solid ${T.border}`, color:T.gold, borderRadius:20, padding:"6px 14px", fontSize:11, fontFamily:T.mono, fontWeight:700 }}>
@@ -2937,7 +3039,51 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             )}
           </div>
 
-          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Bills</div>
+          {ledgerView==="account" && (
+            <>
+              <div style={{ display:"flex", gap:14, marginBottom:16, flexWrap:"wrap" }}>
+                <div style={{ background:T.surface, borderRadius:8, padding:"14px 18px", borderLeft:`3px solid ${T.gold}`, minWidth:160 }}>
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL WORK (DEBIT)</div>
+                  <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.white, marginTop:2 }}>Rs.{acctDebit.toFixed(2)}</div>
+                </div>
+                <div style={{ background:T.surface, borderRadius:8, padding:"14px 18px", borderLeft:`3px solid ${T.green}`, minWidth:160 }}>
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL PAID (CREDIT)</div>
+                  <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.green, marginTop:2 }}>Rs.{acctCredit.toFixed(2)}</div>
+                </div>
+                <div style={{ background:T.surface, borderRadius:8, padding:"14px 18px", borderLeft:`3px solid ${(acctDebit-acctCredit)>0?T.red:T.green}`, minWidth:160 }}>
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>BALANCE DUE</div>
+                  <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:(acctDebit-acctCredit)>0?T.red:T.green, marginTop:2 }}>Rs.{(acctDebit-acctCredit).toFixed(2)}</div>
+                </div>
+              </div>
+              <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Account Statement (auto from challans &amp; payments)</div>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, marginBottom:20 }}>
+                <thead><tr style={{ background:T.surface }}>{["Date","Particulars","Challan/Ref","Debit","Credit","Balance"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {acctWithBal.length===0 && <tr><td colSpan={6} style={{ padding:16, textAlign:"center", color:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}` }}>No challans or payments yet for {yearFilter}.</td></tr>}
+                  {acctWithBal.map((r,i) => (
+                    <tr key={i} style={{ background:i%2===0?T.card:T.surface }}>
+                      <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.date}</td>
+                      <td style={{ padding:"8px 10px", color:T.white, border:`1px solid ${T.border}` }}>{r.particulars}</td>
+                      <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.ref||"—"}</td>
+                      <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.debit?`Rs.${r.debit.toFixed(2)}`:""}</td>
+                      <td style={{ padding:"8px 10px", color:T.green, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.credit?`Rs.${r.credit.toFixed(2)}`:""}</td>
+                      <td style={{ padding:"8px 10px", color:r.balance>0?T.red:T.green, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>Rs.{r.balance.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  {acctWithBal.length>0 && (
+                    <tr style={{ background:T.bg }}>
+                      <td colSpan={3} style={{ padding:"10px", fontFamily:T.mono, fontWeight:700, color:T.gold, border:`1px solid ${T.border}` }}>TOTAL</td>
+                      <td style={{ padding:"10px", fontFamily:T.mono, fontWeight:900, color:T.white, border:`1px solid ${T.border}` }}>Rs.{acctDebit.toFixed(2)}</td>
+                      <td style={{ padding:"10px", fontFamily:T.mono, fontWeight:900, color:T.green, border:`1px solid ${T.border}` }}>Rs.{acctCredit.toFixed(2)}</td>
+                      <td style={{ padding:"10px", fontFamily:T.mono, fontWeight:900, color:(acctDebit-acctCredit)>0?T.red:T.green, border:`1px solid ${T.border}` }}>Rs.{(acctDebit-acctCredit).toFixed(2)}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {ledgerView!=="account" && <><div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Bills</div>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, marginBottom:20 }}>
             <thead><tr style={{ background:T.surface }}>{["Date","Bill No","Designs","Type","Total",""].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
             <tbody>
@@ -2970,6 +3116,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
               ))}
             </tbody>
           </table>
+          </>}
 
           {showBillForm && <BillForm jobber={j} designs={designs} selJ={selJ} suggestForDesign={suggestForDesign} challans={(challans||[]).filter(c => c.jobberId===selJ && c.status==="approved" && !c.billed)} onClose={() => setShowBillForm(false)} onSave={async (bill, usedChallanIds) => {
         await dbUpsert("bills", billToRow(bill));
@@ -3230,7 +3377,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           </div>
         </div>
         <div style={{ maxWidth:1100, margin:"0 auto", padding:24 }}>
-          <DesignDetail design={sel} jobbers={people} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role="jobber" currentUser={user.name} currentJobber={user} L={L} onSendLot={sendLot} people={people} />
+          <DesignDetail design={sel} jobbers={people} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role="jobber" currentUser={user.name} currentJobber={user} L={L} onSendLot={sendLot} people={people} challans={challans} />
         </div>
         <Toast {...toast} />
       </div>
@@ -3303,7 +3450,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           );
         })}
       </div>
-      {showChallan && <ChallanForm jobbers={people} designs={designs} role="jobber" currentUser={user.name} fixedJobber={user.id} onClose={()=>setShowChallan(false)} onSave={async (c) => {
+      {showChallan && <ChallanForm jobbers={people} designs={designs} challans={challans} role="jobber" currentUser={user.name} fixedJobber={user.id} onClose={()=>setShowChallan(false)} onSave={async (c) => {
         if (c.newDesign && !designs.some(d => String(d.designNo)===String(c.designNo))) {
           const nd = makePlaceholderDesign(c, user.name);
           await dbUpsert("designs", dToRow(nd));
@@ -3312,8 +3459,21 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
-        recordNotification(user.name, `New challan — Design ${c.designNo} by ${user.name} (${c.qty} pcs) — needs approval`, "");
-        showToast("Challan submitted for approval ✓");
+        // send-to-next: create a movement so the next jobber sees this design with received pieces
+        if (c.sendToId) {
+          const target = c.sendToId==="__office__" ? null : people.find(j=>j.id===c.sendToId);
+          const targetName = c.sendToId==="__office__" ? "Office / Admin" : (target?.name||"");
+          const design = designs.find(d => String(d.designNo)===String(c.designNo));
+          if (design) {
+            const mv = { id:`MV${Date.now()}`, date:c.date||new Date().toISOString().slice(0,10), jobber:user.name, receivedFrom:user.name, sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:+c.qty, remark:`After ${c.process||"work"}`, status:"sent" };
+            const updated = { ...design, movements:[...(design.movements||[]), mv] };
+            setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+            await dbUpsert("movements", mvToRow(mv, design.id));
+            recordNotification(user.name, `${user.name} sent Design ${c.designNo} to ${targetName} (${c.qty} pcs)`, design.id);
+          }
+        }
+        recordNotification(user.name, `New challan — Design ${c.designNo} by ${user.name} (${c.qty} pcs)`, "");
+        showToast(c.sendToId ? "Saved & sent to next ✓" : "Challan saved ✓");
         setShowChallan(false);
       }} />}
       <Toast {...toast} />
@@ -3438,7 +3598,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     if ((n.readBy||[]).includes(currentUser)) return;
     const updated = { ...n, readBy:[...(n.readBy||[]), currentUser] };
     setNotifications(prev => prev.map(x => x.id===n.id ? updated : x));
-    await dbUpsert("notifications", notifToRow(updated));
+    await dbUpsert("notifications", notifToRow(updated), true);
   }
   function openDesignById(id) {
     const d = designs.find(x => x.id===id);
@@ -3522,7 +3682,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           </div>
         </div>
         <div style={{ maxWidth:1100, margin:"0 auto", padding:24 }}>
-          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} />
+          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} challans={challans} />
         </div>
         <Toast {...toast} />
       </div>
