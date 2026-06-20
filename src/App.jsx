@@ -209,7 +209,7 @@ function dToRow(d) {
     specs: (d.specs||[]).map(sp => ({ key:sp.key, text:sp.text||"", thumb:"" })),
     ratio: d.ratio||{}, trims: d.trims||"", drawing_avg: d.drawingAvg||"", main_thumb: "", manual_avg: { ...(d.manualAvg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }), _formOrder: d.formOrder||[] },
     date_program: d.dateProgram||"", date_cut: d.dateCut||"",
-    notes: d.notes||"", active_colors: d.activeColors||[],
+    notes: d.notes||"", keywords: d.keywords||"", active_colors: d.activeColors||[],
     colors: (d.colors||[]).map(c => ({ ...c, swatch: "" })),
     processes: d.processes||{},
     photos: (d.photos||[]).map(p => ({ id: p.id, note: p.note, date: p.date, src: "" })),
@@ -233,7 +233,7 @@ function rowToD(r) {
     hasPocket: !!r.has_pocket, hasButtons: !!r.has_buttons, hasLabel: !!r.has_label,
     specs: r.specs||[], ratio: r.ratio||{}, trims: r.trims||"", drawingAvg: r.drawing_avg||"", mainThumb: r.main_thumb||"", manualAvg: r.manual_avg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, formOrder: (r.manual_avg&&r.manual_avg._formOrder)||[],
     dateProgram: r.date_program||"", dateCut: r.date_cut||"",
-    notes: r.notes||"", activeColors: r.active_colors||[], colors: r.colors||[],
+    notes: r.notes||"", keywords: r.keywords||"", activeColors: r.active_colors||[], colors: r.colors||[],
     processes: r.processes||{}, photos: r.photos||[],
     supplierBills: r.supplier_bills||[], customerOrders: r.customer_orders||[],
     movements: [], jobberEntries: [], status: r.status||"New", mrpFinalized: !!r.mrp_finalized,
@@ -2110,7 +2110,7 @@ function FabricBillPhoto({ bill, onPick }) {
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
 function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [] }) {
-  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
+  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
   const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","fabricbill","photos","process","note"];
   const [secOrder, setSecOrder] = useState(() => (existing && existing.formOrder && existing.formOrder.length===DEFAULT_ORDER.length) ? existing.formOrder : DEFAULT_ORDER);
@@ -2167,6 +2167,9 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
       <div {...dragHandle("identity")}>
         {handleBar}
       <Section title="Design Identity">
+        <div style={{ background:T.gold+"15", border:`1px solid ${T.gold}`, borderRadius:8, padding:12, marginBottom:12 }}>
+          <Inp label="🏷 Code Words / Tags (type here, search by these later)" value={d.keywords||""} onChange={upd("keywords")} placeholder="e.g. blue check, diwali lot, party wear" />
+        </div>
         <div style={G}>
           <Inp label="Design Number *" value={d.designNo} onChange={upd("designNo")} placeholder="e.g. 2084" />
           <Inp label="Lot No (this run)" value={d.lotNo} onChange={upd("lotNo")} placeholder="e.g. 3290" />
@@ -3834,7 +3837,8 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     (d.lotNo||"").toLowerCase().includes(sl) ||
     (d.brand||"").toLowerCase().includes(sl) ||
     (d.style||"").toLowerCase().includes(sl) ||
-    (d.fabric||"").toLowerCase().includes(sl)
+    (d.fabric||"").toLowerCase().includes(sl) ||
+    (d.keywords||"").toLowerCase().includes(sl)
   ) : [];
   const peopleResults = search.length > 1 ? people.filter(p =>
     (p.name||"").toLowerCase().includes(sl) || (p.prefix||"").toLowerCase().includes(sl)
@@ -3844,7 +3848,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return (
       <div style={{ minHeight:"100vh", background:T.bg }}>
         <div style={{ background:T.surface, borderBottom:`2px solid ${T.gold}`, padding:"14px 24px", display:"flex", justifyContent:"space-between" }}>
-          <div style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:700 }}>AASHISH APPARELS · {creating?"New Design":"Edit Design"}</div>
+          <div style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:700 }}>AASHISH APPARELS · {creating?"New Design (v4 ✓ has Code Words)":"Edit Design (v4 ✓ has Code Words)"}</div>
           <Btn label="Cancel" onClick={() => { setCreating(false); setEditing(false); }} color={T.surface} textColor={T.steelLt} small />
         </div>
         <div style={{ maxWidth:1000, margin:"0 auto", padding:24 }}>
@@ -3986,6 +3990,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
                 <span style={{ fontFamily:T.mono, fontSize:22, fontWeight:900, color:T.gold }}>{designLabel(d)}</span>
                 <span style={{ color:T.white, fontWeight:600, marginLeft:16 }}>{d.brand}</span>
                 <span style={{ color:T.steelLt, marginLeft:12 }}>Style: {d.style}</span>
+                {d.keywords && <span style={{ color:T.gold, marginLeft:12, fontSize:12, fontStyle:"italic" }}>🏷 {d.keywords}</span>}
               </div>
             ))}
             {isAdmin && peopleResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"12px 0 6px" }}>People</div>}
