@@ -1325,7 +1325,13 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
 function DesignCostSheet({ design, jobbers, challans = [] }) {
   const totalPcs = (design.colors||[]).reduce((a,c) => a+Object.values(c.sizes||{}).reduce((x,v) => x+(+v||0), 0), 0);
   // actual logged work for this design (from challans, not rejected)
-  const myCh = challans.filter(c => String(c.designNo)===String(design.designNo) && c.status!=="rejected");
+  // gather every challan LINE that belongs to this design (challans can hold multiple designs)
+  const myCh = [];
+  challans.filter(c => c.status!=="rejected" && challanDesigns(c).includes(String(design.designNo))).forEach(c => {
+    const dLines = (c.lines||[]).filter(l => String(l.designNo)===String(design.designNo));
+    if (dLines.length) dLines.forEach(l => myCh.push({ ...l, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status }));
+    else myCh.push({ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status });
+  });
   const chTotal = myCh.reduce((a,c)=>a+(+c.amount||0),0);
   const jn = id => (jobbers.find(j=>j.id===id)||{}).name || id || "—";
   let grand = 0;
@@ -1624,10 +1630,27 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
 }
 function rowToChallan(r) {
-  return { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  // back-compat: if no lines array but has single design, synthesize one line
+  if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
+  return c;
+}
+// helpers for multi-design challans
+function challanDesigns(c) { return (c.lines && c.lines.length) ? [...new Set(c.lines.map(l=>String(l.designNo)).filter(Boolean))] : (c.designNo?[String(c.designNo)]:[]); }
+function challanTotal(c) { return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.amount||0),0) : (+c.amount||0); }
+function challanQty(c) { return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.qty||0),0) : (+c.qty||0); }
+// link helpers: bill <-> challan matched by shared design numbers (same jobber)
+function billDesignNos(b) { return [...new Set((b.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
+function challansForBill(b, challans) {
+  const dns = billDesignNos(b);
+  return (challans||[]).filter(c => c.jobberId===b.jobberId && c.status!=="rejected" && challanDesigns(c).some(dn => dns.includes(dn)));
+}
+function billsForChallan(c, bills) {
+  const dns = challanDesigns(c);
+  return (bills||[]).filter(b => b.jobberId===c.jobberId && billDesignNos(b).some(dn => dns.includes(dn)));
 }
 let _notifSink = null;
 function recordNotification(who, message, designId) {
@@ -2681,23 +2704,42 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
 }
 
 // ── Challans (jobber-entered, admin-approved; feeds bills) ─────────────────────
-function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, showToast, currentUser, role }) {
+function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bills = [], showToast, currentUser, role }) {
   const isAdmin = role === "admin";
   const [filterJ, setFilterJ] = useState("");
+  const [filterDesign, setFilterDesign] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [showApproved, setShowApproved] = useState(false); // default: hide approved, show pending
+  const [monthSel, setMonthSel] = useState([]); // multi-select months; empty = all
   const jname = id => jobbers.find(j => j.id===id)?.name || id || "—";
+  const monthOf = d => (d||"").slice(0,7); // YYYY-MM
+
+  // available months from challans
+  const allMonths = [...new Set(challans.map(c => monthOf(c.date)).filter(Boolean))].sort().reverse();
+  function toggleMonth(m) { setMonthSel(p => p.includes(m) ? p.filter(x=>x!==m) : [...p, m]); }
 
   let list = challans;
+  if (!showApproved) list = list.filter(c => c.status==="pending"); // default view = pending only
   if (filterJ) list = list.filter(c => c.jobberId===filterJ);
-  if (statusFilter !== "all") list = list.filter(c => c.status===statusFilter);
+  if (filterDesign) list = list.filter(c => challanDesigns(c).includes(String(filterDesign)));
+  if (monthSel.length) list = list.filter(c => monthSel.includes(monthOf(c.date)));
   list = [...list].sort((a,b) => (b.date||"").localeCompare(a.date||""));
+
+  // TOTAL PIECES RECEIVED BY US = sum of qty on the last process (Press) challans, approved only
+  const piecesReceived = challans
+    .filter(c => c.status!=="rejected")
+    .reduce((sum, c) => {
+      const pressLines = (c.lines||[]).filter(l => l.process==="Press");
+      if (pressLines.length) return sum + pressLines.reduce((a,l)=>a+(+l.qty||0),0);
+      if (c.process==="Press") return sum + (+c.qty||0);
+      return sum;
+    }, 0);
 
   async function approve(c) {
     const u = { ...c, status:"approved" };
     await dbUpsert("challans", challanToRow(u));
     setChallans(p => p.map(x => x.id===c.id?u:x));
-    recordActivity(currentUser, "Approved challan", `Design ${c.designNo}`, `${jname(c.jobberId)} · ${c.qty} pcs`);
+    recordActivity(currentUser, "Approved challan", `Designs ${challanDesigns(c).join(", ")}`, `${jname(c.jobberId)} · ${challanQty(c)} pcs`);
     showToast("Challan approved ✓");
   }
   async function reject(c) {
@@ -2716,20 +2758,44 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, sh
 
   return (
     <div>
-      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+      <div style={{ display:"flex", gap:10, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
         <Btn label="+ New Challan" onClick={() => setShowForm(true)} />
         {isAdmin && pendingCount>0 && <Badge label={`${pendingCount} pending approval`} color={T.orange} />}
+        <div style={{ marginLeft:"auto", background:T.surface, borderRadius:8, padding:"8px 16px", border:`1px solid ${T.gold}44` }}>
+          <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>PIECES RECEIVED (from Press): </span>
+          <span style={{ fontFamily:T.mono, fontSize:16, color:T.gold, fontWeight:900 }}>{piecesReceived.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", gap:10, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+        <button onClick={() => setShowApproved(v=>!v)} style={{ background:showApproved?T.gold:T.surface, color:showApproved?T.bg:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+          {showApproved ? "Showing ALL (tap for pending only)" : "Showing PENDING only (tap to show all)"}
+        </button>
         <select value={filterJ} onChange={e => setFilterJ(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
           <option value="">All jobbers</option>
           {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
         </select>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
-          <option value="all">All status</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
+        <select value={filterDesign} onChange={e => setFilterDesign(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, fontFamily:T.mono }}>
+          <option value="">All designs</option>
+          {designs.map(d => <option key={d.id} value={d.designNo}>{d.designNo}</option>)}
         </select>
       </div>
+
+      {/* Multi-month picker */}
+      {allMonths.length>0 && (
+        <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+          <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Months:</span>
+          <button onClick={() => setMonthSel([])} style={{ background:monthSel.length===0?T.gold:T.surface, color:monthSel.length===0?T.bg:T.steelLt, border:"none", borderRadius:14, padding:"4px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>All</button>
+          {allMonths.map(m => {
+            const on = monthSel.includes(m);
+            const label = new Date(m+"-01").toLocaleDateString("en-IN",{month:"short",year:"2-digit"});
+            return <button key={m} onClick={() => toggleMonth(m)} style={{ background:on?T.gold:T.surface, color:on?T.bg:T.steelLt, border:"none", borderRadius:14, padding:"4px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>{label}</button>;
+          })}
+          {monthSel.length>0 && <span style={{ fontFamily:T.mono, fontSize:9, color:T.gold }}>({monthSel.length} selected)</span>}
+        </div>
+      )}
+
+      {list.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono, fontSize:12 }}>{showApproved ? "No challans match these filters." : "No pending challans. 🎉 Tap \"Showing PENDING only\" to see all."}</div>}
 
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
@@ -2741,54 +2807,71 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, sh
             </tr>
           </thead>
           <tbody>
-            {list.map((c,i) => (
+            {list.map((c,i) => {
+              const designsList = challanDesigns(c);
+              const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
+              return (
               <tr key={c.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`3px solid ${monthColor(c.date)}` }}>
-                <td style={{ padding:"8px", color:T.steelLt, whiteSpace:"nowrap" }}>{c.date||"—"}</td>
-                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono }}>{c.challanNo||"—"}</td>
-                <td style={{ padding:"8px", color:T.white, fontWeight:600, whiteSpace:"nowrap" }}>{jname(c.jobberId)}</td>
-                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono }}>{c.designNo}</td>
-                <td style={{ padding:"8px", color:T.steelLt, whiteSpace:"nowrap" }}>{c.process||"—"}</td>
-                <td style={{ padding:"8px", color:T.text, fontFamily:T.mono, textAlign:"center" }}>{c.qty}</td>
-                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono }}>Rs.{c.rate}</td>
-                <td style={{ padding:"8px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{c.amount}</td>
-                <td style={{ padding:"8px" }}>{c.photo ? <img src={c.photo} alt="" onClick={()=>window.open().document.write(`<img src="${c.photo}" style="max-width:100%">`)} style={{ width:28, height:28, borderRadius:4, objectFit:"cover", cursor:"pointer" }} draggable={false} onContextMenu={e=>e.preventDefault()} /> : <span style={{ color:T.textDim }}>—</span>}</td>
-                <td style={{ padding:"8px" }}>
-                  <Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} />
-                  {c.billed && <Badge label="billed" color={T.steelLt} />}
+                <td style={{ padding:"8px", color:T.steelLt, whiteSpace:"nowrap", verticalAlign:"top" }}>{c.date||"—"}</td>
+                <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono, verticalAlign:"top" }}>{c.challanNo||"—"}</td>
+                <td style={{ padding:"8px", color:T.white, fontWeight:600, whiteSpace:"nowrap", verticalAlign:"top" }}>{jname(c.jobberId)}</td>
+                <td colSpan={5} style={{ padding:"4px 8px" }}>
+                  {lns.map((l,li) => (
+                    <div key={li} style={{ display:"flex", gap:10, padding:"3px 0", borderBottom: li<lns.length-1?`1px solid ${T.border}`:"none", fontSize:11 }}>
+                      <span style={{ color:T.gold, fontFamily:T.mono, fontWeight:700, minWidth:60 }}>{l.designNo}</span>
+                      <span style={{ color:T.steelLt, minWidth:80 }}>{l.process||"—"}</span>
+                      <span style={{ color:T.text, fontFamily:T.mono, minWidth:50 }}>{l.qty} pc</span>
+                      <span style={{ color:T.gold, fontFamily:T.mono, minWidth:60 }}>Rs.{l.rate}</span>
+                      <span style={{ color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{l.amount}</span>
+                      {l.isSplit && <Badge label="split" color={T.steelLt} />}
+                    </div>
+                  ))}
+                  {lns.length>1 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, marginTop:3 }}>Challan total: Rs.{challanTotal(c)} · {challanQty(c)} pcs</div>}
                 </td>
-                <td style={{ padding:"8px", whiteSpace:"nowrap" }}>
+                <td style={{ padding:"8px", verticalAlign:"top" }}>{c.photo ? <img src={c.photo} alt="" onClick={()=>window.open().document.write(`<img src="${c.photo}" style="max-width:100%">`)} style={{ width:28, height:28, borderRadius:4, objectFit:"cover", cursor:"pointer" }} draggable={false} onContextMenu={e=>e.preventDefault()} /> : <span style={{ color:T.textDim }}>—</span>}</td>
+                <td style={{ padding:"8px", verticalAlign:"top" }}>
+                  <Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} />
+                  {(() => { const lb = [...new Set(billsForChallan(c, bills).map(b=>b.billNo).filter(Boolean))]; return lb.length ? <div style={{ fontFamily:T.mono, fontSize:9, color:T.green, marginTop:3 }}>Bill: {lb.join(", ")}</div> : (c.billed && <Badge label="billed" color={T.steelLt} />); })()}
+                </td>
+                <td style={{ padding:"8px", whiteSpace:"nowrap", verticalAlign:"top" }}>
                   {isAdmin && c.status==="pending" && <><Btn label="✓" onClick={()=>approve(c)} color={T.green} textColor="#fff" small /> <Btn label="✕" onClick={()=>reject(c)} color={T.red+"22"} textColor={T.red} small /></>}
                   {isAdmin && c.status!=="pending" && !c.billed && <Btn label="Del" onClick={()=>remove(c)} color={T.red+"22"} textColor={T.red} small />}
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       </div>
-      {list.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No challans.</div>}
 
       {showForm && <ChallanForm jobbers={jobbers} designs={designs} challans={challans} role={role} currentUser={currentUser} onClose={()=>setShowForm(false)} onSave={async (c) => {
-        if (c.newDesign && !designs.some(d => String(d.designNo)===String(c.designNo))) {
-          const nd = makePlaceholderDesign(c, currentUser);
-          await dbUpsert("designs", dToRow(nd));
-          setDesigns(p => [nd, ...p]);
-          recordActivity(currentUser, "Created placeholder design (via challan)", `Design ${c.designNo}`, "needs completion");
-          recordNotification(currentUser, `New placeholder design ${c.designNo} created via challan — complete its details`, nd.id);
+        // create placeholders for any new design numbers
+        for (const dn of (c.newDesignNos||[])) {
+          if (!designs.some(d => String(d.designNo)===String(dn))) {
+            const nd = makePlaceholderDesign({ ...c, designNo:dn }, currentUser);
+            await dbUpsert("designs", dToRow(nd));
+            setDesigns(p => [nd, ...p]);
+            recordActivity(currentUser, "Created placeholder design (via challan)", `Design ${dn}`, "needs completion");
+            recordNotification(currentUser, `New placeholder design ${dn} created via challan — complete its details`, nd.id);
+          }
         }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
+        // send-to-next: create a movement for each design in the challan
         if (c.sendToId) {
           const targetName = c.sendToId==="__office__" ? "Office / Admin" : ((jobbers.find(j=>j.id===c.sendToId)||{}).name||"");
-          const design = designs.find(d => String(d.designNo)===String(c.designNo));
-          if (design) {
-            const mv = { id:`MV${Date.now()}`, date:c.date||new Date().toISOString().slice(0,10), jobber:jname(c.jobberId), receivedFrom:jname(c.jobberId), sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:+c.qty, remark:`After ${c.process||"work"}`, status:"sent" };
-            const updated = { ...design, movements:[...(design.movements||[]), mv] };
-            setDesigns(p => p.map(x => x.id===updated.id?updated:x));
-            await dbUpsert("movements", mvToRow(mv, design.id));
-            recordNotification(currentUser, `Design ${c.designNo} sent to ${targetName} (${c.qty} pcs)`, design.id);
+          for (const dn of challanDesigns(c)) {
+            const design = designs.find(d => String(d.designNo)===String(dn));
+            if (design) {
+              const lineQty = (c.lines||[]).filter(l=>String(l.designNo)===String(dn)).reduce((a,l)=>a+(+l.qty||0),0) || +c.qty;
+              const mv = { id:`MV${Date.now()}_${dn}`, date:c.date||new Date().toISOString().slice(0,10), jobber:jname(c.jobberId), receivedFrom:jname(c.jobberId), sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:lineQty, remark:`Challan ${c.challanNo||""}`, status:"sent" };
+              const updated = { ...design, movements:[...(design.movements||[]), mv] };
+              setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+              await dbUpsert("movements", mvToRow(mv, design.id));
+            }
           }
+          recordNotification(currentUser, `Challan ${c.challanNo||""} sent to ${targetName}`, "");
         }
-        recordActivity(currentUser, "Added challan", `Design ${c.designNo}`, `${jname(c.jobberId)} · ${c.qty} pcs`);
+        recordActivity(currentUser, "Added challan", `Designs ${challanDesigns(c).join(", ")}`, `${jname(c.jobberId)} · ${challanQty(c)} pcs`);
         showToast(c.sendToId ? "Challan saved & sent ✓" : "Challan added ✓");
         setShowForm(false);
       }} />}
@@ -2798,31 +2881,50 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, sh
 
 function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClose, onSave, fixedJobber }) {
   const isAdmin = role === "admin";
-  const [form, setForm] = useState({ jobberId: fixedJobber||"", designNo:"", process:"", qty:"", rate:"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"", isSplit:false });
-  const [newDesignMode, setNewDesignMode] = useState(false);
-  const upd = k => v => setForm(f => ({ ...f, [k]:v }));
-  const amount = (+form.qty||0) * (+form.rate||0);
-  const actingJobber = jobbers.find(j => j.id === (fixedJobber || form.jobberId));
+  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"" });
+  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false }]);
+  const updHead = k => v => setHead(f => ({ ...f, [k]:v }));
+  const actingJobber = jobbers.find(j => j.id === (fixedJobber || head.jobberId));
   const mayCreateDesign = isAdmin || (actingJobber && actingJobber.canCreateDesign);
-  const designExists = designs.some(d => String(d.designNo) === String(form.designNo).trim());
-  const isNewDesign = newDesignMode && form.designNo.trim() && !designExists;
-  // DUPLICATE CHECK: has this same task already been logged on this design by someone else (and not rejected)?
-  const dupChallan = (form.designNo && form.process)
-    ? challans.find(c => String(c.designNo)===String(form.designNo).trim() && c.process===form.process && c.status!=="rejected" && c.jobberId!==form.jobberId)
-    : null;
-  const dupBlocked = dupChallan && !form.isSplit;
-  // how many pieces this jobber received (from a movement sent to them on this design)
-  function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => upd("photo")(src)).catch(()=>{}); }
   const photoRef = useRef();
-  function save() {
-    if (!form.jobberId || !form.designNo || !form.qty) return;
-    if (dupBlocked) return;
-    onSave({ ...form, designNo: form.designNo.trim(), id:`CH${Date.now()}`, qty:+form.qty, rate:+form.rate||0, amount, status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesign: isNewDesign });
+  function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => updHead("photo")(src)).catch(()=>{}); }
+
+  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false }]); }
+  function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
+  function updLine(id, k, v) { setLines(l => l.map(x => x.id===id ? { ...x, [k]:v } : x)); }
+
+  // per-line computed info
+  function lineInfo(ln) {
+    const amount = (+ln.qty||0) * (+ln.rate||0);
+    const designExists = designs.some(d => String(d.designNo) === String(ln.designNo).trim());
+    const isNewDesign = ln.newDesign && ln.designNo.trim() && !designExists;
+    const dup = (ln.designNo && ln.process)
+      ? challans.find(c => challanDesigns(c).includes(String(ln.designNo).trim()) && (c.lines||[]).concat([{process:c.process}]).some(x=>x.process===ln.process) && c.status!=="rejected" && c.jobberId!==head.jobberId)
+      : null;
+    return { amount, isNewDesign, dup, dupBlocked: dup && !ln.isSplit };
   }
-  const dupJobberName = dupChallan ? ((jobbers.find(j=>j.id===dupChallan.jobberId)||{}).name||"another jobber") : "";
+  const total = lines.reduce((a,ln)=>a+((+ln.qty||0)*(+ln.rate||0)),0);
+  const anyBlocked = lines.some(ln => lineInfo(ln).dupBlocked);
+  const validLines = lines.filter(ln => ln.designNo && ln.qty);
+  const canSave = head.jobberId && validLines.length>0 && !anyBlocked;
+
+  function save() {
+    if (!canSave) return;
+    const builtLines = validLines.map(ln => ({ designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:+ln.rate||0, amount:(+ln.qty||0)*(+ln.rate||0), isSplit:!!ln.isSplit }));
+    const newDesignNos = validLines.filter(ln => lineInfo(ln).isNewDesign).map(ln => String(ln.designNo).trim());
+    // first line's process/design kept at top-level for back-compat & simple displays
+    const first = builtLines[0];
+    onSave({
+      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId,
+      lines:builtLines, designNo:first.designNo, process:first.process, qty:builtLines.reduce((a,l)=>a+l.qty,0), rate:first.rate, amount:builtLines.reduce((a,l)=>a+l.amount,0),
+      isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos
+    });
+  }
+
   return (
-    <Modal title="New Challan (v2)" onClose={onClose}>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+    <Modal title="New Challan (v3 — multi-design)" onClose={onClose}>
+      {/* Header: jobber, date, challan no */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:14 }}>
         {fixedJobber
           ? <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
               <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Jobber</label>
@@ -2830,68 +2932,98 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
             </div>
           : <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
               <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Jobber *</label>
-              <select value={form.jobberId} onChange={e => upd("jobberId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
+              <select value={head.jobberId} onChange={e => updHead("jobberId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
                 <option value="">— select jobber —</option>
                 {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
               </select>
             </div>
         }
-        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Design No *</label>
-            {mayCreateDesign && <button onClick={() => { setNewDesignMode(m => !m); upd("designNo")(""); }} style={{ background:"none", border:"none", color:T.gold, fontFamily:T.mono, fontSize:9, cursor:"pointer", textTransform:"uppercase" }}>{newDesignMode ? "pick existing" : "+ new design"}</button>}
+        <Inp label="Challan No" value={head.challanNo} onChange={updHead("challanNo")} />
+        <Inp label="Date" type="date" value={head.date} onChange={updHead("date")} />
+      </div>
+
+      {/* Design lines */}
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Designs in this challan (add as many as needed)</div>
+      {lines.map((ln,idx) => {
+        const info = lineInfo(ln);
+        const dupName = info.dup ? ((jobbers.find(j=>j.id===info.dup.jobberId)||{}).name||"another jobber") : "";
+        return (
+          <div key={ln.id} style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:10, border:`1px solid ${info.dupBlocked?T.red:T.border}` }}>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, flex:"2 1 140px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Design No *</label>
+                  {mayCreateDesign && <button onClick={() => { updLine(ln.id,"newDesign",!ln.newDesign); updLine(ln.id,"designNo",""); }} style={{ background:"none", border:"none", color:T.gold, fontFamily:T.mono, fontSize:8, cursor:"pointer", textTransform:"uppercase" }}>{ln.newDesign?"pick existing":"+ new"}</button>}
+                </div>
+                {ln.newDesign
+                  ? <input value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} placeholder="New design no" style={{ background:T.bg, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
+                  : <select value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }}>
+                      <option value="">— select —</option>
+                      {designs.map(d => <option key={d.id} value={d.designNo}>{designLabel(d)}</option>)}
+                    </select>
+                }
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, flex:"1 1 100px" }}>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Process</label>
+                <select value={ln.process} onChange={e => updLine(ln.id,"process",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }}>
+                  <option value="">—</option>
+                  {PROCESSES.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, width:70 }}>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Qty *</label>
+                <input type="number" value={ln.qty} onChange={e => updLine(ln.id,"qty",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }} />
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, width:80 }}>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Rate</label>
+                <input type="number" value={ln.rate} onChange={e => updLine(ln.id,"rate",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }} />
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, width:90 }}>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Amount</label>
+                <div style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:700, padding:"7px 0" }}>Rs.{info.amount}</div>
+              </div>
+              {lines.length>1 && <Btn label="✕" onClick={() => removeLine(ln.id)} color={T.red+"22"} textColor={T.red} small />}
+            </div>
+            {info.isNewDesign && <div style={{ fontFamily:T.mono, fontSize:9, color:T.green, marginTop:6 }}>✓ New placeholder design "{ln.designNo}" will be created.</div>}
+            {info.dup && (
+              <div style={{ marginTop:8 }}>
+                <div style={{ fontFamily:T.mono, fontSize:10, color:info.dupBlocked?T.red:T.green, fontWeight:700 }}>⚠ {dupName} already logged "{ln.process}" on design {ln.designNo}.</div>
+                <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", fontFamily:T.sans, fontSize:11, color:T.text, marginTop:4 }}>
+                  <input type="checkbox" checked={!!ln.isSplit} onChange={e => updLine(ln.id,"isSplit",e.target.checked)} style={{ width:14, height:14, accentColor:T.gold }} />
+                  Genuine SPLIT (one cuts, one stitches) — allow both.
+                </label>
+              </div>
+            )}
           </div>
-          {newDesignMode
-            ? <input value={form.designNo} onChange={e => upd("designNo")(e.target.value)} placeholder="Type new design no" style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }} />
-            : <select value={form.designNo} onChange={e => upd("designNo")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
-                <option value="">— select —</option>
-                {designs.map(d => <option key={d.id} value={d.designNo}>{designLabel(d)}</option>)}
-              </select>
-          }
-          {isNewDesign && <span style={{ fontFamily:T.mono, fontSize:9, color:T.green }}>✓ New placeholder design will be created — admin completes details later.</span>}
-          {newDesignMode && form.designNo.trim() && designExists && <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>This design already exists — challan will link to it.</span>}
-        </div>
-        <Inp label="Process" value={form.process} onChange={upd("process")} options={PROCESSES} />
-        <Inp label="Date" type="date" value={form.date} onChange={upd("date")} />
-        <Inp label="Quantity *" type="number" value={form.qty} onChange={upd("qty")} />
-        <Inp label="Rate (Rs.)" type="number" value={form.rate} onChange={upd("rate")} />
-        <Inp label="Challan No" value={form.challanNo} onChange={upd("challanNo")} />
-        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Amount (auto)</label>
-          <div style={{ fontFamily:T.mono, fontSize:16, color:T.gold, fontWeight:700, padding:"6px 0" }}>Rs.{amount}</div>
+        );
+      })}
+      <Btn label="+ Add another design" onClick={addLine} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}`, marginBottom:14 }} />
+
+      {/* Total */}
+      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
+        <div style={{ background:T.bg, borderRadius:8, padding:"10px 18px", border:`1px solid ${T.gold}44` }}>
+          <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>CHALLAN TOTAL: </span>
+          <span style={{ fontFamily:T.mono, fontSize:18, color:T.gold, fontWeight:900 }}>Rs.{total}</span>
         </div>
       </div>
-      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16 }}>
-        <Btn label={form.photo?"Change Photo":"+ Challan Photo (optional)"} onClick={()=>photoRef.current.click()} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.border}` }} />
-        {form.photo && <img src={form.photo} alt="" style={{ width:40, height:40, borderRadius:4, objectFit:"cover" }} />}
+
+      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:14 }}>
+        <Btn label={head.photo?"Change Photo":"+ Challan Photo (optional)"} onClick={()=>photoRef.current.click()} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.border}` }} />
+        {head.photo && <img src={head.photo} alt="" style={{ width:40, height:40, borderRadius:4, objectFit:"cover" }} />}
         <input ref={photoRef} type="file" accept="image/*" style={{ display:"none" }} onChange={handlePhoto} />
       </div>
-      {/* Send to next jobber */}
-      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:14 }}>
         <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Send To Next (after this work)</label>
-        <select value={form.sendToId} onChange={e => upd("sendToId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
+        <select value={head.sendToId} onChange={e => updHead("sendToId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
           <option value="">— no one / finished —</option>
           <option value="__office__">🏢 Office / Admin</option>
-          {jobbers.filter(j=>j.role==="jobber" && j.id!==form.jobberId).map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
+          {jobbers.filter(j=>j.role==="jobber" && j.id!==head.jobberId).map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
         </select>
       </div>
-      {/* Duplicate-task warning + split option */}
-      {dupChallan && (
-        <div style={{ background:(form.isSplit?T.green:T.red)+"22", border:`1px solid ${form.isSplit?T.green:T.red}`, borderRadius:8, padding:12, marginBottom:12 }}>
-          <div style={{ fontFamily:T.mono, fontSize:11, color:form.isSplit?T.green:T.red, fontWeight:700, marginBottom:6 }}>
-            ⚠ {dupJobberName} already logged "{form.process}" on design {form.designNo}.
-          </div>
-          <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontFamily:T.sans, fontSize:12, color:T.text }}>
-            <input type="checkbox" checked={!!form.isSplit} onChange={e => upd("isSplit")(e.target.checked)} style={{ width:16, height:16, accentColor:T.gold }} />
-            This is a genuine SPLIT (e.g. one cuts, one stitches) — allow both entries.
-          </label>
-          {!form.isSplit && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:6 }}>Blocked to prevent a duplicate. Tick the box above only if it's a real split.</div>}
-        </div>
-      )}
       {!isAdmin && <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginBottom:12 }}>This challan auto-posts to the cost sheet & your ledger now. Admin can reject it later if wrong.</div>}
       <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
         <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
-        <Btn label="Save Challan" onClick={save} disabled={!form.jobberId||!form.designNo||!form.qty||dupBlocked} />
+        <Btn label="Save Challan" onClick={save} disabled={!canSave} />
       </div>
     </Modal>
   );
@@ -2935,7 +3067,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   // ── AUTO LEDGER: built directly from challans (debit) + payments (credit) ──
   const myChallans = (challans||[]).filter(c => c.jobberId===selJ && c.status!=="rejected" && yearOf(c.date)===yearFilter);
   const acctRows = [
-    ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Design ${c.designNo} — ${c.process||"work"}`, ref:c.challanNo||"", debit:+c.amount||0, credit:0 })),
+    ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}`, ref:c.challanNo||"", debit:challanTotal(c), credit:0 })),
     ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
   ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
   let runBal = 0;
@@ -3085,18 +3217,22 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
 
           {ledgerView!=="account" && <><div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Bills</div>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, marginBottom:20 }}>
-            <thead><tr style={{ background:T.surface }}>{["Date","Bill No","Designs","Type","Total",""].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+            <thead><tr style={{ background:T.surface }}>{["Date","Bill No","Designs","Linked Challans","Type","Total",""].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
             <tbody>
-              {(ledgerView==="bank"?bankBills:ledgerView==="cash"?cashBills:myBills).map((b,i) => (
+              {(ledgerView==="bank"?bankBills:ledgerView==="cash"?cashBills:myBills).map((b,i) => {
+                const linkedCh = challansForBill(b, challans);
+                const linkedNos = [...new Set(linkedCh.map(c=>c.challanNo).filter(Boolean))];
+                return (
                 <tr key={b.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(b.billDate)}` }}>
                   <td style={{ padding:"8px 10px", color:T.steelLt }}>{b.billDate}</td>
                   <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{b.billNo}</td>
                   <td style={{ padding:"8px 10px", color:T.text, fontFamily:T.mono }}>{(b.lines||[]).map(l=>l.designNo).join(", ")}</td>
+                  <td style={{ padding:"8px 10px", color:linkedNos.length?T.green:T.textDim, fontFamily:T.mono, fontSize:10 }}>{linkedNos.length?linkedNos.join(", "):"none"}</td>
                   <td style={{ padding:"8px 10px" }}><Badge label={b.hasGst?"GST/Bank":"Cash"} color={b.hasGst?T.gold:T.steelLt} /></td>
                   <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{(+b.total||0).toFixed(2)}</td>
                   <td style={{ padding:"8px 10px" }}><Btn label="✕" onClick={() => deleteBill(b.id)} color={T.red+"22"} textColor={T.red} small /></td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
 
@@ -3451,28 +3587,32 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         })}
       </div>
       {showChallan && <ChallanForm jobbers={people} designs={designs} challans={challans} role="jobber" currentUser={user.name} fixedJobber={user.id} onClose={()=>setShowChallan(false)} onSave={async (c) => {
-        if (c.newDesign && !designs.some(d => String(d.designNo)===String(c.designNo))) {
-          const nd = makePlaceholderDesign(c, user.name);
-          await dbUpsert("designs", dToRow(nd));
-          setDesigns(p => [nd, ...p]);
-          recordNotification(user.name, `New placeholder design ${c.designNo} created via challan by ${user.name} — complete its details`, nd.id);
+        for (const dn of (c.newDesignNos||[])) {
+          if (!designs.some(d => String(d.designNo)===String(dn))) {
+            const nd = makePlaceholderDesign({ ...c, designNo:dn }, user.name);
+            await dbUpsert("designs", dToRow(nd));
+            setDesigns(p => [nd, ...p]);
+            recordNotification(user.name, `New placeholder design ${dn} created via challan by ${user.name} — complete its details`, nd.id);
+          }
         }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
-        // send-to-next: create a movement so the next jobber sees this design with received pieces
         if (c.sendToId) {
           const target = c.sendToId==="__office__" ? null : people.find(j=>j.id===c.sendToId);
           const targetName = c.sendToId==="__office__" ? "Office / Admin" : (target?.name||"");
-          const design = designs.find(d => String(d.designNo)===String(c.designNo));
-          if (design) {
-            const mv = { id:`MV${Date.now()}`, date:c.date||new Date().toISOString().slice(0,10), jobber:user.name, receivedFrom:user.name, sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:+c.qty, remark:`After ${c.process||"work"}`, status:"sent" };
-            const updated = { ...design, movements:[...(design.movements||[]), mv] };
-            setDesigns(p => p.map(x => x.id===updated.id?updated:x));
-            await dbUpsert("movements", mvToRow(mv, design.id));
-            recordNotification(user.name, `${user.name} sent Design ${c.designNo} to ${targetName} (${c.qty} pcs)`, design.id);
+          for (const dn of challanDesigns(c)) {
+            const design = designs.find(d => String(d.designNo)===String(dn));
+            if (design) {
+              const lineQty = (c.lines||[]).filter(l=>String(l.designNo)===String(dn)).reduce((a,l)=>a+(+l.qty||0),0) || +c.qty;
+              const mv = { id:`MV${Date.now()}_${dn}`, date:c.date||new Date().toISOString().slice(0,10), jobber:user.name, receivedFrom:user.name, sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:lineQty, remark:`Challan ${c.challanNo||""}`, status:"sent" };
+              const updated = { ...design, movements:[...(design.movements||[]), mv] };
+              setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+              await dbUpsert("movements", mvToRow(mv, design.id));
+            }
           }
+          recordNotification(user.name, `${user.name} sent Challan ${c.challanNo||""} to ${targetName}`, "");
         }
-        recordNotification(user.name, `New challan — Design ${c.designNo} by ${user.name} (${c.qty} pcs)`, "");
+        recordNotification(user.name, `New challan by ${user.name} — designs ${challanDesigns(c).join(", ")} (${challanQty(c)} pcs)`, "");
         showToast(c.sendToId ? "Saved & sent to next ✓" : "Challan saved ✓");
         setShowChallan(false);
       }} />}
@@ -3787,7 +3927,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
         )}
         {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} showToast={showToast} currentUser={currentUser} /></div></Section>}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
-        {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
+        {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals" action={<PdfBtn targetId="rpt-fabric" title="Fabric Purchases" />}><div id="rpt-fabric"><FabricPurchases designs={designs} /></div></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
