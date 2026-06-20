@@ -2109,7 +2109,7 @@ function FabricBillPhoto({ bill, onPick }) {
 }
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
-function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
+function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [] }) {
   const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
   const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","fabricbill","photos","process","note"];
@@ -2133,9 +2133,12 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
   function addColor() { setD(f => ({...f, colors:[...f.colors, {id:`C${Date.now()}`,colorName:"",colorNo:"",sleeve:"",meters:"",sizes:{},samples:{},sampleFabric:[],balance:"",swatch:""}]})); }
   function updColor(id,k,v) { setD(f => ({...f, colors:f.colors.map(c => c.id===id?{...c,[k]:v}:c)})); }
   function removeColor(id) { setD(f => ({...f, colors:f.colors.filter(c => c.id!==id)})); }
-  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:""}]})); }
+  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:"", appliesTo:[]}]})); }
   function updFabricBill(id,k,v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; })})); }
   function removeFabricBill(id) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).filter(b => b.id!==id)})); }
+  function addBillDesign(billId) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:[...(b.appliesTo||[]), {designNo:"", meters:""}]} : b)})); }
+  function updBillDesign(billId, idx, k, v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:(b.appliesTo||[]).map((x,i)=>i===idx?{...x,[k]:v}:x)} : b)})); }
+  function removeBillDesign(billId, idx) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:(b.appliesTo||[]).filter((x,i)=>i!==idx)} : b)})); }
   function fabricBillPhoto(id, file) { if(!file) return; compressImage(file).then(src => updFabricBill(id,"photo",src)).catch(()=>{}); }
   function toggleSize(s) { setD(f => ({...f, activeColors:f.activeColors.includes(s)?f.activeColors.filter(x=>x!==s):[...f.activeColors,s]})); }
   function ensureSpecs(arr) { return SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"" }); }
@@ -2292,7 +2295,32 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber }) {
                 <Inp label="Bill No" value={b.billNo} onChange={v => updFabricBill(b.id,"billNo",v)} />
                 <Inp label="LR No" value={b.lrNo} onChange={v => updFabricBill(b.id,"lrNo",v)} />
               </div>
-              <Btn label="✕" onClick={() => removeFabricBill(b.id)} color={T.red+"22"} textColor={T.red} small />
+              {/* This bill also covers other designs (split meters) */}
+              <div style={{ background:T.bg, borderRadius:6, padding:10, marginTop:8, marginBottom:8 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                  <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>This bill also covers other designs (split meters)</span>
+                  <Btn label="+ add design" onClick={() => addBillDesign(b.id)} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+                </div>
+                <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:6 }}>
+                  This design ({d.designNo||"current"}): <b style={{color:T.gold}}>{b.qty||0} m</b>
+                  {(b.appliesTo||[]).length>0 && <span> &nbsp;· others below &nbsp;· grand total: <b style={{color:T.gold}}>{((+b.qty||0)+(b.appliesTo||[]).reduce((a,x)=>a+(+x.meters||0),0))} m</b></span>}
+                </div>
+                {(b.appliesTo||[]).map((ad,adi) => (
+                  <div key={adi} style={{ display:"flex", gap:8, alignItems:"flex-end", marginBottom:6 }}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:3, flex:2 }}>
+                      <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Other Design No</label>
+                      <input value={ad.designNo} onChange={e => updBillDesign(b.id,adi,"designNo",e.target.value)} list={`designs-${b.id}`} placeholder="design no" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.sans, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box" }} />
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:3, width:90 }}>
+                      <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Meters</label>
+                      <input type="number" value={ad.meters} onChange={e => updBillDesign(b.id,adi,"meters",e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box" }} />
+                    </div>
+                    <Btn label="✕" onClick={() => removeBillDesign(b.id,adi)} color={T.red+"22"} textColor={T.red} small />
+                  </div>
+                ))}
+                <datalist id={`designs-${b.id}`}>{designs && designs.map(dd => <option key={dd.id} value={dd.designNo} />)}</datalist>
+              </div>
+              <Btn label="✕ Remove this bill" onClick={() => removeFabricBill(b.id)} color={T.red+"22"} textColor={T.red} small />
             </div>
           ))}
         </div>
@@ -3780,6 +3808,23 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     recordActivity(currentUser, isNew?"Created design":"Edited design", `Design ${d.designNo}`, isNew?"":`edit #${newD.editCount}`);
     if (isNew) { setDesigns(p => [newD,...p]); showToast(`Design ${d.designNo} created!`); }
     else { setDesigns(p => p.map(x => x.id===newD.id?newD:x)); showToast("Saved!"); }
+    // PROPAGATE multi-design fabric bills: copy each bill into the OTHER designs it covers (with their meters)
+    try {
+      for (const b of (newD.supplierBills||[])) {
+        for (const ad of (b.appliesTo||[])) {
+          const dn = String(ad.designNo||"").trim();
+          if (!dn || dn===String(newD.designNo)) continue;
+          const target = designs.find(x => String(x.designNo)===dn);
+          if (!target) continue;
+          // build a linked copy of the bill for the target design with that design's meters
+          const linkedBill = { ...b, id:`${b.id}__${target.id}`, qty:ad.meters||"", amount:((+ad.meters||0)*(+b.rate||0))||"", designNo:dn, appliesTo:[], linkedFrom:newD.designNo, sharedBillNo:b.billNo };
+          const existingBills = (target.supplierBills||[]).filter(x => x.id!==linkedBill.id);
+          const updatedTarget = { ...target, supplierBills:[...existingBills, linkedBill] };
+          await dbUpsert("designs", dToRow(updatedTarget));
+          setDesigns(p => p.map(x => x.id===target.id?updatedTarget:x));
+        }
+      }
+    } catch(e) { console.error("bill propagation error", e); }
     setCreating(false); setEditing(false); setSel(isNew?null:newD);
   }
   function updateDesign(updated) { setDesigns(p => p.map(x => x.id===updated.id?updated:x)); setSel(updated); }
@@ -3803,7 +3848,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           <Btn label="Cancel" onClick={() => { setCreating(false); setEditing(false); }} color={T.surface} textColor={T.steelLt} small />
         </div>
         <div style={{ maxWidth:1000, margin:"0 auto", padding:24 }}>
-          <DesignForm onSave={saveDesign} onCancel={() => { setCreating(false); setEditing(false); }} existing={editing?sel:null} jobbers={jobbers} onAddJobber={addJobberInline} />
+          <DesignForm onSave={saveDesign} onCancel={() => { setCreating(false); setEditing(false); }} existing={editing?sel:null} jobbers={jobbers} onAddJobber={addJobberInline} designs={designs} />
         </div>
         <Toast {...toast} />
       </div>
