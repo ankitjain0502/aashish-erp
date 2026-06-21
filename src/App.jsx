@@ -46,6 +46,14 @@ const T = {
 };
 
 const SIZES = ["S","M","L","XL","XXL","3XL","4XL","5XL","6XL","7XL","8XL","9XL"];
+// Sort sizes into standard order (S first ... custom/large last), regardless of selection order
+function sortSizes(arr, customSizes = []) {
+  const order = [...SIZES, ...customSizes];
+  return [...(arr||[])].sort((a,b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia===-1?999:ia) - (ib===-1?999:ib);
+  });
+}
 // Process map: barcode digit -> process name
 const PROC_MAP = [
   { digit: "1", name: "Stitch" },
@@ -704,7 +712,7 @@ function AveragesBlock({ design }) {
 
 // ── Job Sheet (read-only view, with audit info) ───────────────────────────────
 function JobSheetView({ design }) {
-  const sizes = design.activeColors || ["S","M","L","XL","XXL"];
+  const sizes = sortSizes(design.activeColors && design.activeColors.length ? design.activeColors : ["S","M","L","XL","XXL"], design.customSizes);
   const hasSizes = (design.colors||[]).some(c => Object.keys(c.sizes||{}).length > 0);
   const totalPcs = (design.colors||[]).reduce((a,c) => a + sizes.reduce((x,s) => x + (+(c.sizes||{})[s]||0), 0), 0);
   return (
@@ -742,7 +750,7 @@ function JobSheetView({ design }) {
         </div>
       )}
       <div style={{ display:"flex", gap:"6px 24px", flexWrap:"wrap", marginBottom:14, fontSize:12 }}>
-        {design.ratio && typeof design.ratio==="object" && Object.values(design.ratio).some(v=>v) && <div><span style={{ color:T.steelLt }}>Ratio: </span><span style={{ color:T.gold, fontFamily:T.mono }}>{(design.activeColors||[]).filter(sz=>(design.ratio||{})[sz]).map(sz=>`${sz}:${design.ratio[sz]}`).join("  ")}</span></div>}
+        {design.ratio && typeof design.ratio==="object" && Object.values(design.ratio).some(v=>v) && <div><span style={{ color:T.steelLt }}>Ratio: </span><span style={{ color:T.gold, fontFamily:T.mono }}>{sortSizes(design.activeColors, design.customSizes).filter(sz=>(design.ratio||{})[sz]).map(sz=>`${sz}:${design.ratio[sz]}`).join("  ")}</span></div>}
         {design.dateProgram && <div><span style={{ color:T.steelLt }}>Program given: </span><span style={{ color:T.white }}>{design.dateProgram}</span></div>}
         {design.dateCut && <div><span style={{ color:T.steelLt }}>Cut: </span><span style={{ color:T.white }}>{design.dateCut}</span></div>}
       </div>
@@ -802,7 +810,7 @@ function JobSheetView({ design }) {
 function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendLot, people = [], currentJobber }) {
   const [showSend, setShowSend] = useState(false);
   const [detailed, setDetailed] = useState(false);
-  const sizes = design.activeColors || ["S","M","L","XL","XXL"];
+  const sizes = sortSizes(design.activeColors && design.activeColors.length ? design.activeColors : ["S","M","L","XL","XXL"], design.customSizes);
   const isAdmin = role === "admin";
   const locked = !!design.locked;
   const canEdit = !locked;
@@ -1116,7 +1124,7 @@ function SupplierBills({ design, onUpdate, role }) {
 }
 function CustomerOrders({ design, onUpdate, role }) {
   const canEdit = role === "admin" || role === "team";
-  const sizes = design.activeColors || ["S","M","L","XL","XXL"];
+  const sizes = sortSizes(design.activeColors && design.activeColors.length ? design.activeColors : ["S","M","L","XL","XXL"], design.customSizes);
   const [form, setForm] = useState({ customer:"", colorId:"", sizes:{} });
   const orders = design.customerOrders || [];
   function updSize(s, v) { setForm(f => ({ ...f, sizes:{ ...f.sizes, [s]:v } })); }
@@ -2304,7 +2312,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
         {handleBar}
       <Section title="Size Ratio (per size)">
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
-          {d.activeColors.map(sz => (
+          {sortSizes(d.activeColors, d.customSizes).map(sz => (
             <div key={sz} style={{ textAlign:"center" }}>
               <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, marginBottom:3 }}>{sz}</div>
               <input type="number" value={(d.ratio||{})[sz]||""} onChange={e => updRatio(sz, e.target.value)} placeholder="0" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontFamily:T.mono, fontSize:12, width:48, padding:"5px 4px", textAlign:"center" }} />
