@@ -67,10 +67,11 @@ async function dbDelete(table, id) {
 }
 
 const T = {
-  bg: "#0F1923", surface: "#162030", card: "#1C2B3A", border: "#243447",
-  gold: "#C8A028", steel: "#5A7A94", steelLt: "#8AAFC8",
-  white: "#FFFFFF", red: "#C84040", green: "#2E8B57", orange: "#C87820",
-  text: "#D8E8F0", textDim: "#6A8A9A",
+  bg: "#F7F4FB", surface: "#FFFFFF", card: "#FCFAFF", border: "#E6DCF2",
+  gold: "#B8860B", steel: "#8B6FB0", steelLt: "#A98FC9",
+  white: "#2A1A3E", red: "#D14D72", green: "#2E9E6B", orange: "#E08A2B",
+  text: "#3A2A52", textDim: "#9385A8",
+  accent: "#8B4FBF", accentLt: "#C77DD6", pink: "#E06B9C",
   mono: "'Courier New',monospace", sans: "'Segoe UI',Arial,sans-serif"
 };
 
@@ -430,6 +431,82 @@ function Inp({ label, value, onChange, type="text", placeholder="", style={}, op
           </select>
         : <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} readOnly={readOnly} style={base} />
       }
+    </div>
+  );
+}
+
+function Calculator({ onClose }) {
+  const [display, setDisplay] = useState("0");
+  const [prev, setPrev] = useState(null);
+  const [op, setOp] = useState(null);
+  const [fresh, setFresh] = useState(true);
+  function inputDigit(d) {
+    if (fresh) { setDisplay(d==="."?"0.":d); setFresh(false); }
+    else if (d==="." && display.includes(".")) {}
+    else setDisplay(display==="0" && d!=="." ? d : display+d);
+  }
+  function clearAll() { setDisplay("0"); setPrev(null); setOp(null); setFresh(true); }
+  function backspace() { setDisplay(display.length>1 ? display.slice(0,-1) : "0"); }
+  function compute(a, b, o) {
+    a=+a; b=+b;
+    if (o==="+") return a+b; if (o==="-") return a-b;
+    if (o==="\u00d7") return a*b; if (o==="\u00f7") return b===0?0:a/b;
+    return b;
+  }
+  function chooseOp(o) {
+    if (op && !fresh) { const r = compute(prev, display, op); setDisplay(String(r)); setPrev(r); }
+    else setPrev(display);
+    setOp(o); setFresh(true);
+  }
+  function equals() {
+    if (op==null) return;
+    const r = compute(prev, display, op);
+    setDisplay(String(Math.round(r*10000)/10000)); setPrev(null); setOp(null); setFresh(true);
+  }
+  function pct() { setDisplay(String((+display)/100)); }
+  const keys = [
+    ["C","\u232b","%","\u00f7"],
+    ["7","8","9","\u00d7"],
+    ["4","5","6","-"],
+    ["1","2","3","+"],
+    ["0",".","="],
+  ];
+  function press(k) {
+    if (k==="C") clearAll();
+    else if (k==="\u232b") backspace();
+    else if (k==="%") pct();
+    else if (["+","-","\u00d7","\u00f7"].includes(k)) chooseOp(k);
+    else if (k==="=") equals();
+    else inputDigit(k);
+  }
+  return (
+    <div style={{ position:"fixed", bottom:80, right:24, width:260, background:T.surface, borderRadius:14, boxShadow:"0 10px 40px rgba(0,0,0,0.4)", border:`1px solid ${T.border}`, zIndex:9998, overflow:"hidden" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:T.accent||T.gold }}>
+        <span style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:"#fff" }}>Calculator</span>
+        <button onClick={onClose} style={{ background:"none", border:"none", color:"#fff", fontSize:16, cursor:"pointer", lineHeight:1 }}>\u2715</button>
+      </div>
+      <div style={{ padding:14 }}>
+        <div style={{ background:T.bg, borderRadius:8, padding:"14px 12px", textAlign:"right", fontFamily:T.mono, fontSize:26, fontWeight:700, color:T.text, marginBottom:12, overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{display}</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {keys.map((row,ri) => (
+            <div key={ri} style={{ display:"flex", gap:8 }}>
+              {row.map(k => {
+                const isOp = ["+","-","\u00d7","\u00f7","="].includes(k);
+                const isFn = ["C","\u232b","%"].includes(k);
+                const wide = k==="0";
+                return (
+                  <button key={k} onClick={()=>press(k)} style={{
+                    flex: wide?2.15:1, padding:"14px 0", borderRadius:8, border:"none", cursor:"pointer",
+                    fontFamily:T.mono, fontSize:16, fontWeight:700,
+                    background: k==="=" ? (T.accent||T.gold) : isOp ? (T.accentLt||T.gold)+"33" : isFn ? T.border : T.card,
+                    color: k==="=" ? "#fff" : isOp ? (T.accent||T.gold) : T.text,
+                  }}>{k}</button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1661,6 +1738,7 @@ function rowToCn(r) {
   return { id:r.id, partyType:r.party_type||"jobber", party:r.party||"", cnNo:r.cn_no||"", cnDate:r.cn_date||"", reason:r.reason||"", lines:r.lines||[], total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
 }
 function cnDesignNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
+function cnBillNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.billNo||"")).filter(Boolean))]; }
 function payToRow(p) {
   return { id:p.id, jobber_id:p.jobberId||"", date:p.date||"", amount:p.amount||0, mode:p.mode||"", channel:p.channel||"bank", note:p.note||"", created_by:p.createdBy||"", created_at_str:p.createdAtStr||"" };
 }
@@ -2483,15 +2561,17 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
               <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Credit Notes linked to this design (view only)</div>
               <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginBottom:8 }}>Created from the Jobber / Fabric Supplier ledgers. Shown here automatically via the design number.</div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-                <thead><tr style={{ background:T.surface }}>{["Date","CN No","Against","Reason","Amount (this design)"].map(h => <th key={h} style={{ padding:"6px 8px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                <thead><tr style={{ background:T.surface }}>{["Date","CN No","Against Bill","Against","Reason","Amount (this design)"].map(h => <th key={h} style={{ padding:"6px 8px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
                 <tbody>
                   {linked.map((c,i) => {
                     const amtThis = (c.lines||[]).filter(l=>String(l.designNo)===dn).reduce((a,l)=>a+(+l.amount||0),0);
+                    const billThis = [...new Set((c.lines||[]).filter(l=>String(l.designNo)===dn).map(l=>l.billNo).filter(Boolean))].join(", ");
                     const against = c.partyType==="supplier" ? `Supplier: ${c.party}` : `Jobber: ${(jobbers.find(j=>j.id===c.party)||{}).name||c.party}`;
                     return (
                       <tr key={c.id||i} style={{ background:i%2===0?T.card:T.surface }}>
                         <td style={{ padding:"6px 8px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.cnDate}</td>
                         <td style={{ padding:"6px 8px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.cnNo}</td>
+                        <td style={{ padding:"6px 8px", color:T.text, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{billThis||"—"}</td>
                         <td style={{ padding:"6px 8px", color:T.text, border:`1px solid ${T.border}` }}>{against}</td>
                         <td style={{ padding:"6px 8px", color:T.text, border:`1px solid ${T.border}` }}>{c.reason}</td>
                         <td style={{ padding:"6px 8px", color:T.red, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>Rs.{amtThis}</td>
@@ -2519,7 +2599,13 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
               <div style={{ position:"relative", paddingBottom:"75%", backgroundImage:`url(${p.src})`, backgroundSize:"cover", backgroundPosition:"center" }} onContextMenu={e => e.preventDefault()}>
                 <button onClick={() => removePhoto(p.id)} style={{ position:"absolute", top:6, right:6, background:T.red, border:"none", color:"#fff", borderRadius:4, width:20, height:20, cursor:"pointer", fontSize:11 }}>✕</button>
               </div>
-              {p.note && <div style={{ padding:"6px 8px", fontSize:10, color:T.steelLt }}>{p.note}</div>}
+              <textarea
+                value={p.note||""}
+                onChange={e => setD(f => ({ ...f, photos:(f.photos||[]).map(x => x.id===p.id ? { ...x, note:e.target.value } : x) }))}
+                placeholder="Describe this photo…"
+                rows={2}
+                style={{ width:"100%", boxSizing:"border-box", background:T.bg, border:"none", borderTop:`1px solid ${T.border}`, color:T.text, fontFamily:T.sans, fontSize:11, padding:"6px 8px", resize:"vertical", outline:"none" }}
+              />
             </div>
           ))}
         </div>
@@ -2602,7 +2688,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
   const rows = [
     ...bills.filter(b=>yearOf(b.billDate)===yearFilter).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:+b.amount||0, credit:0 })),
     ...myPays.filter(p=>yearOf(p.date)===yearFilter).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
-    ...myCNs.filter(c=>yearOf(c.cnDate)===yearFilter).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
+    ...myCNs.filter(c=>yearOf(c.cnDate)===yearFilter).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   let run=0; const withBal = rows.map(r=>{ run+=r.debit-r.credit; return {...r,balance:run}; });
   const totDebit = rows.reduce((a,r)=>a+r.debit,0), totCredit = rows.reduce((a,r)=>a+r.credit,0);
@@ -3607,7 +3693,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const acctRows = [
     ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}`, ref:c.challanNo||"", debit:challanTotal(c), credit:0 })),
     ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
-    ...myCNs.map(c => ({ date:c.cnDate||"", kind:"credit", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
+    ...myCNs.map(c => ({ date:c.cnDate||"", kind:"credit", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
   let runBal = 0;
   const acctWithBal = acctRows.map(r => { runBal += r.debit - r.credit; return { ...r, balance:runBal }; });
@@ -3824,16 +3910,16 @@ function CreditNoteForm({ partyType, partyLabel, designs, onClose, onSave, curre
   const [cnNo, setCnNo] = useState("");
   const [cnDate, setCnDate] = useState(new Date().toISOString().slice(0,10));
   const [reason, setReason] = useState("");
-  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]);
+  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", billNo:"", qty:"", rate:"", amount:"" }]);
   const REASONS = ["Damage claim","Rate difference","Short supply","Quality issue","Goods returned","Other"];
-  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]); }
+  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", billNo:"", qty:"", rate:"", amount:"" }]); }
   function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
   function updLine(id,k,v) { setLines(l => l.map(x => { if(x.id!==id) return x; const nx={...x,[k]:v}; const q=+nx.qty||0,r=+nx.rate||0; if(k==="qty"||k==="rate") nx.amount=(q*r)?String(q*r):nx.amount; return nx; })); }
   const total = lines.reduce((a,l)=>a+(+l.amount||0),0);
   const valid = lines.filter(l => l.designNo && l.amount);
   function save() {
     if (!cnNo || valid.length===0) return;
-    onSave({ cnNo, cnDate, reason, lines: valid.map(l=>({ designNo:String(l.designNo).trim(), qty:+l.qty||0, rate:+l.rate||0, amount:+l.amount||0 })), total, createdBy:currentUser });
+    onSave({ cnNo, cnDate, reason, lines: valid.map(l=>({ designNo:String(l.designNo).trim(), billNo:String(l.billNo||"").trim(), qty:+l.qty||0, rate:+l.rate||0, amount:+l.amount||0 })), total, createdBy:currentUser });
   }
   return (
     <Modal title={`New Credit Note — ${partyLabel}`} onClose={onClose}>
@@ -3847,6 +3933,7 @@ function CreditNoteForm({ partyType, partyLabel, designs, onClose, onSave, curre
       {lines.map(l => (
         <div key={l.id} style={{ display:"flex", gap:8, marginBottom:8, alignItems:"flex-end", flexWrap:"wrap" }}>
           <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={designs.map(d=>d.designNo)} style={{ flex:2, minWidth:110 }} />
+          <Inp label="Against Bill No" value={l.billNo} onChange={v=>updLine(l.id,"billNo",v)} style={{ width:120 }} placeholder="bill no" />
           <Inp label="Qty" type="number" value={l.qty} onChange={v=>updLine(l.id,"qty",v)} style={{ width:70 }} />
           <Inp label="Rate" type="number" value={l.rate} onChange={v=>updLine(l.id,"rate",v)} style={{ width:80 }} />
           <Inp label="Amount" type="number" value={l.amount} onChange={v=>updLine(l.id,"amount",v)} style={{ width:90 }} />
@@ -4320,6 +4407,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
 function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, creditNotes, setCreditNotes, onLogout }) {
   const isAdmin = role === "admin";
   const [tab, setTab] = useState("Home");
+  const [showCalc, setShowCalc] = useState(false);
   const [sel, setSel] = useState(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -4351,6 +4439,23 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
   }
 
   const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
+
+  function exportBackup() {
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: currentUser,
+      app: "Aashish Apparels ERP",
+      designs, people, bookings, bills, payments, challans, creditNotes, notifications, activityLog,
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type:"application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
+    a.href = url; a.download = `aashish-erp-backup-${stamp}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Backup downloaded ✓");
+  }
 
   async function sendLot(mv) {
     if (!sel) return;
@@ -4432,6 +4537,16 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           <div style={{ display:"flex", gap:10, alignItems:"center" }}>
             <span style={{ color:T.steelLt, fontSize:12 }}>{currentUser}</span>
             <Btn label="Edit Design" onClick={() => setEditing(true)} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.gold}44` }} />
+            {isAdmin && <Btn label="Delete Design" onClick={async () => {
+              if (!sel) return;
+              if (!window.confirm(`Delete design ${sel.designNo}? This permanently removes the design and cannot be undone.\n\nTip: use the Backup button first if you want a saved copy.`)) return;
+              if (!window.confirm(`Are you absolutely sure? Design ${sel.designNo} will be gone for good.`)) return;
+              await dbDelete("designs", sel.id);
+              setDesigns(p => p.filter(x => x.id!==sel.id));
+              recordActivity(currentUser, "Deleted design", `Design ${sel.designNo}`, "permanent");
+              showToast("Design deleted");
+              setSel(null);
+            }} color={T.red+"22"} textColor={T.red} small style={{ border:`1px solid ${T.red}55` }} />}
             <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
           </div>
         </div>
@@ -4445,18 +4560,19 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:T.sans }}>
-      <div style={{ background:T.surface, borderBottom:`2px solid ${T.gold}`, padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" }}>
+      <div style={{ background:`linear-gradient(135deg, #F3EAFB 0%, #FBEAF3 100%)`, borderBottom:`2px solid ${T.accent}`, padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" }}>
         <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap" }}>
           <div style={{ marginRight:32, padding:"14px 0" }}>
             <div style={{ fontFamily:T.mono, fontSize:14, fontWeight:900, color:T.gold, letterSpacing:2 }}>AASHISH APPARELS</div>
             <div style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, letterSpacing:2 }}>PRODUCTION ERP · {isAdmin?"ADMIN":"TEAM"} · {currentUser}</div>
           </div>
           {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{ background:"none", border:"none", cursor:"pointer", padding:"18px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, color:tab===t?T.gold:T.steelLt, borderBottom:tab===t?`2px solid ${T.gold}`:"2px solid transparent", marginBottom:-2, textTransform:"uppercase" }}><BL text={t} /></button>
+            <button key={t} onClick={() => setTab(t)} style={{ background:"none", border:"none", cursor:"pointer", padding:"18px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, color:tab===t?T.accent:T.steel, borderBottom:tab===t?`2px solid ${T.accent}`:"2px solid transparent", marginBottom:-2, textTransform:"uppercase" }}><BL text={t} /></button>
           ))}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
           <NotificationBell notifications={notifications} currentUser={currentUser} onOpenDesign={openDesignById} onMarkRead={markNotifRead} />
+          {isAdmin && <Btn label="⭳ Backup" onClick={exportBackup} color={T.accent} textColor="#fff" small />}
           <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
       </div>
@@ -4586,12 +4702,13 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           </div>
         )}
       </div>
+      {/* Floating calculator */}
+      {showCalc && <Calculator onClose={()=>setShowCalc(false)} />}
+      <button onClick={()=>setShowCalc(v=>!v)} title="Calculator" style={{ position:"fixed", bottom:24, right:24, width:54, height:54, borderRadius:"50%", border:"none", cursor:"pointer", background:T.accent||T.gold, color:"#fff", fontSize:22, boxShadow:"0 6px 20px rgba(0,0,0,0.3)", zIndex:9997 }}>🧮</button>
       <Toast {...toast} />
     </div>
   );
 }
-
-// ── Login ─────────────────────────────────────────────────────────────────────
 const ADMINS = [
   { name: "Admin 1", pin: "0000" },
   { name: "Admin 2", pin: "1111" },
@@ -4720,6 +4837,7 @@ export default function App() {
     return () => { window.__erpSaveError = null; };
   }, []);
   useEffect(() => { loadAll(); }, []);
+  useEffect(() => { document.body.style.background = T.bg; document.body.style.margin = "0"; }, []);
 
   if (loading) return <Loader />;
   if (!auth) return <Login people={people} loadInfo={loadInfo} onRefresh={loadAll} onAdmin={name => setAuth({role:"admin", name})} onUser={u => setAuth({role:u.role, user:u, name:u.name})} />;
