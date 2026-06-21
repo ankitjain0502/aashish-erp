@@ -4166,7 +4166,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
 }
 
 // ── Team / Admin shared design workspace ──────────────────────────────────────
-function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, onLogout }) {
+function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, creditNotes, setCreditNotes, onLogout }) {
   const isAdmin = role === "admin";
   const [tab, setTab] = useState("Home");
   const [sel, setSel] = useState(null);
@@ -4597,6 +4597,7 @@ export default function App() {
       activityLog={activityLog}
       notifications={notifications} setNotifications={setNotifications}
       challans={challans} setChallans={setChallans}
+      creditNotes={creditNotes} setCreditNotes={setCreditNotes}
       onLogout={() => setAuth(null)}
     />
     </>
