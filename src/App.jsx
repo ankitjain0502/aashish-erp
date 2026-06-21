@@ -2690,67 +2690,158 @@ function FabricPayModal({ supplier, onClose, onSave }) {
   );
 }
 
-function FabricPurchases({ designs }) {
-  const [monthFilter, setMonthFilter] = useState("");
+function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
+  const [view, setView] = useState(""); // "" = nothing shown, "suppliers", "monthly"
+  const [openSupplier, setOpenSupplier] = useState("");
+  const [showRecord, setShowRecord] = useState(false);
+
   const all = [];
   designs.forEach(d => (d.supplierBills||[]).forEach(b => all.push({ ...b, designNo: b.designNo||d.designNo })));
   all.sort((a,b) => (b.billDate||"").localeCompare(a.billDate||""));
-  const months = Array.from(new Set(all.map(b => monthKey(b.billDate)).filter(Boolean)));
-  const filtered = monthFilter ? all.filter(b => monthKey(b.billDate)===monthFilter) : all;
-  const totQty = filtered.reduce((a,b)=>a+(+b.qty||0),0);
-  const totAmt = filtered.reduce((a,b)=>a+(+b.amount||0),0);
+  const totQty = all.reduce((a,b)=>a+(+b.qty||0),0);
+  const totAmt = all.reduce((a,b)=>a+(+b.amount||0),0);
+
+  // group by supplier
+  const bySupplier = {};
+  all.forEach(b => { const s = (b.supplier||"(no supplier)").trim(); if(!bySupplier[s]) bySupplier[s]=[]; bySupplier[s].push(b); });
+  const supplierNames = Object.keys(bySupplier).sort();
+
+  // group by month
   const byMonth = {};
-  all.forEach(b => { const m = monthKey(b.billDate)||"(no date)"; if(!byMonth[m]) byMonth[m]={qty:0,amt:0}; byMonth[m].qty+=(+b.qty||0); byMonth[m].amt+=(+b.amount||0); });
+  all.forEach(b => { const m = monthKey(b.billDate)||"(no date)"; if(!byMonth[m]) byMonth[m]={qty:0,amt:0,bills:[]}; byMonth[m].qty+=(+b.qty||0); byMonth[m].amt+=(+b.amount||0); byMonth[m].bills.push(b); });
+
   return (
     <div>
-      <div style={{ display:"flex", gap:14, marginBottom:18, flexWrap:"wrap" }}>
+      {/* Summary + actions */}
+      <div style={{ display:"flex", gap:14, marginBottom:18, flexWrap:"wrap", alignItems:"center" }}>
         <div style={{ background:T.surface, borderRadius:8, padding:"14px 18px", borderLeft:`3px solid ${T.gold}` }}>
-          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL FABRIC {monthFilter?`(${monthFilter})`:"(all)"}</div>
-          <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.gold }}>{totQty} m · Rs.{totAmt.toFixed(2)}</div>
+          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL FABRIC (all)</div>
+          <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.gold }}>{totQty} m · Rs.{totAmt.toFixed(0)}</div>
         </div>
+        <Btn label="+ Record Purchase" onClick={()=>setShowRecord(true)} color={T.green} textColor="#fff" />
       </div>
-      <div style={{ marginBottom:16 }}>
-        <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:20, padding:"6px 14px", fontSize:11, fontFamily:T.mono }}>
-          <option value="">All months</option>
-          {months.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
+
+      {/* View toggles */}
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <button onClick={()=>setView(view==="suppliers"?"":"suppliers")} style={{ background:view==="suppliers"?T.gold:T.surface, color:view==="suppliers"?T.bg:T.steelLt, border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          {view==="suppliers"?"▼ ":"▶ "}By Supplier
+        </button>
+        <button onClick={()=>setView(view==="monthly"?"":"monthly")} style={{ background:view==="monthly"?T.gold:T.surface, color:view==="monthly"?T.bg:T.steelLt, border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          {view==="monthly"?"▼ ":"▶ "}Monthly Summary
+        </button>
       </div>
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Monthly Purchase Summary</div>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, marginBottom:20 }}>
-        <thead><tr style={{ background:T.surface }}>{["Month","Quantity (m)","Amount"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
-        <tbody>
-          {Object.entries(byMonth).map(([m,v]) => (
-            <tr key={m} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(m==="(no date)"?"":(all.find(b=>monthKey(b.billDate)===m)?.billDate))}` }}>
-              <td style={{ padding:"8px 10px", color:T.white, fontWeight:600 }}>{m}</td>
-              <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{v.qty}</td>
-              <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, fontWeight:700 }}>Rs.{v.amt.toFixed(2)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>All Fabric Bills</div>
-      <div style={{ overflowX:"auto" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-          <thead><tr style={{ background:T.surface }}>{["Sr","Bill Date","Bill No","Particulars","Design","Qty","Rate","Amount","LR No"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
+
+      {view==="" && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>Tap "By Supplier" or "Monthly Summary" above to view purchases.</div>}
+
+      {/* BY SUPPLIER — expand each on tap */}
+      {view==="suppliers" && (
+        <div>
+          {supplierNames.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No fabric bills yet.</div>}
+          {supplierNames.map(s => {
+            const bills = bySupplier[s];
+            const sQty = bills.reduce((a,b)=>a+(+b.qty||0),0);
+            const sAmt = bills.reduce((a,b)=>a+(+b.amount||0),0);
+            const open = openSupplier===s;
+            return (
+              <div key={s} style={{ marginBottom:10, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                <div onClick={()=>setOpenSupplier(open?"":s)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", background:T.surface, cursor:"pointer" }}>
+                  <span style={{ color:T.white, fontWeight:700, fontSize:14 }}>{open?"▼ ":"▶ "}{s}</span>
+                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>{sQty} m · Rs.{sAmt.toFixed(0)} · {bills.length} bill{bills.length>1?"s":""}</span>
+                </div>
+                {open && (
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                      <thead><tr style={{ background:T.card }}>{["Bill Date","Bill No","Design","Qty","Rate","Amount","LR No","Transporter"].map(h => <th key={h} style={{ padding:"7px 9px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {bills.map((b,i) => (
+                          <tr key={b.id||i} style={{ borderBottom:`1px solid ${T.border}` }}>
+                            <td style={{ padding:"7px 9px", color:T.steelLt }}>{b.billDate||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>{b.billNo||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>{b.designNo}</td>
+                            <td style={{ padding:"7px 9px", color:T.text, fontFamily:T.mono }}>{b.qty||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>Rs.{b.rate||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{b.amount||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.steelLt, fontFamily:T.mono }}>{b.lrNo||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.steelLt }}>{b.transporter||"—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* MONTHLY SUMMARY */}
+      {view==="monthly" && (
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead><tr style={{ background:T.surface }}>{["Month","Quantity (m)","Amount"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
           <tbody>
-            {filtered.map((b,i) => (
-              <tr key={b.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(b.billDate)}` }}>
-                <td style={{ padding:"8px 10px", fontFamily:T.mono, color:T.steelLt }}>{i+1}</td>
-                <td style={{ padding:"8px 10px", color:T.steelLt }}>{b.billDate||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, fontWeight:700 }}>{b.billNo||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.white, fontWeight:600 }}>{b.supplier}</td>
-                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{b.designNo}</td>
-                <td style={{ padding:"8px 10px", color:T.text, fontFamily:T.mono }}>{b.qty||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>Rs.{b.rate||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{b.amount||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono }}>{b.lrNo||"—"}</td>
+            {Object.keys(byMonth).length===0 && <tr><td colSpan={3} style={{ padding:30, textAlign:"center", color:T.textDim, fontFamily:T.mono }}>No fabric bills yet.</td></tr>}
+            {Object.entries(byMonth).map(([m,v]) => (
+              <tr key={m} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(m==="(no date)"?"":(all.find(b=>monthKey(b.billDate)===m)?.billDate))}` }}>
+                <td style={{ padding:"8px 10px", color:T.white, fontWeight:600 }}>{m}</td>
+                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{v.qty}</td>
+                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, fontWeight:700 }}>Rs.{v.amt.toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-      {filtered.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No fabric bills yet.</div>}
+      )}
+
+      {showRecord && <RecordPurchaseModal designs={designs} setDesigns={setDesigns} showToast={showToast} currentUser={currentUser} onClose={()=>setShowRecord(false)} />}
     </div>
+  );
+}
+
+function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onClose }) {
+  const [designNo, setDesignNo] = useState("");
+  const [form, setForm] = useState({ billType:"Fabric", supplier:"", billNo:"", billDate:new Date().toISOString().slice(0,10), lrNo:"", transporter:"", qty:"", rate:"" });
+  const upd = k => v => setForm(f => ({ ...f, [k]:v }));
+  const amount = (+form.qty||0)*(+form.rate||0);
+  async function save() {
+    const target = designs.find(d => String(d.designNo)===String(designNo).trim());
+    if (!target) { showToast("Pick a valid design", "error"); return; }
+    const bill = { id:`B${Date.now()}`, billType:form.billType, supplier:form.supplier, billNo:form.billNo, billDate:form.billDate, lrNo:form.lrNo, transporter:form.transporter, qty:form.qty, rate:form.rate, amount:amount?String(amount):"", photo:"", appliesTo:[], designNo:target.designNo };
+    const updated = { ...target, supplierBills:[...(target.supplierBills||[]), bill] };
+    await dbUpsert("designs", dToRow(updated));
+    setDesigns(p => p.map(x => x.id===target.id?updated:x));
+    recordActivity(currentUser, "Recorded fabric purchase", `Design ${target.designNo}`, `${form.supplier} · Rs.${amount}`);
+    showToast("Purchase recorded ✓");
+    onClose();
+  }
+  return (
+    <Modal title="Record Fabric Purchase" onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:12 }}>This adds a fabric bill to the chosen design (same as adding it inside the design).</div>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+        <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Design No *</label>
+        <input value={designNo} onChange={e=>setDesignNo(e.target.value)} list="rp-designs" placeholder="type or pick design no" style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }} />
+        <datalist id="rp-designs">{designs.map(d => <option key={d.id} value={d.designNo} />)}</datalist>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+        <Inp label="Type" value={form.billType} onChange={upd("billType")} options={["Fabric","Trims"]} />
+        <Inp label="Supplier *" value={form.supplier} onChange={upd("supplier")} />
+        <Inp label="Bill No" value={form.billNo} onChange={upd("billNo")} />
+        <Inp label="Bill Date" type="date" value={form.billDate} onChange={upd("billDate")} />
+        <Inp label="Qty (meters)" type="number" value={form.qty} onChange={upd("qty")} />
+        <Inp label="Rate" type="number" value={form.rate} onChange={upd("rate")} />
+        <Inp label="LR No" value={form.lrNo} onChange={upd("lrNo")} />
+        <Inp label="Transporter" value={form.transporter} onChange={upd("transporter")} />
+      </div>
+      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
+        <div style={{ background:T.bg, borderRadius:8, padding:"8px 16px", border:`1px solid ${T.gold}44` }}>
+          <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>AMOUNT: </span>
+          <span style={{ fontFamily:T.mono, fontSize:16, color:T.gold, fontWeight:900 }}>Rs.{amount}</span>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Purchase" onClick={save} disabled={!designNo||!form.supplier} color={T.green} textColor="#fff" />
+      </div>
+    </Modal>
   );
 }
 
@@ -4393,7 +4484,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
         {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
-        {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals" action={<PdfBtn targetId="rpt-fabric" title="Fabric Purchases" />}><div id="rpt-fabric"><FabricPurchases designs={designs} /></div></Section>}
+        {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases"><FabricPurchases designs={designs} setDesigns={setDesigns} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
         {tab==="Search" && (
