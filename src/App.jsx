@@ -3,20 +3,34 @@ import { useState, useRef, useEffect, Fragment } from "react";
 const SUPA_URL = "https://izgfywbyaqjngziiiyls.supabase.co";
 const GTRANSLATE_KEY = "AIzaSyD5RnT37HyQYE-qCM2MvABCRzYjFJUE7Js";
 // Translate text to target language (hi/gu). Brackets () and Hinglish handled by Google's transliteration.
+// Transliterate a single romanized word to target script (hi/gu) using Google Input Tools (free, no key)
+async function transliterateWord(word, target) {
+  const itc = target==="gu" ? "gu-t-i0-und" : "hi-t-i0-und";
+  try {
+    const r = await fetch(`https://inputtools.google.com/request?text=${encodeURIComponent(word)}&itc=${itc}&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8`);
+    const data = await r.json();
+    if (data && data[0]==="SUCCESS" && data[1] && data[1][0] && data[1][0][1] && data[1][0][1][0]) {
+      return data[1][0][1][0];
+    }
+  } catch(e) {}
+  return word; // fallback: keep original
+}
+// Transliterate a whole instruction text to target script, word by word, preserving numbers/punctuation/brackets
 async function googleTranslate(text, target) {
   try {
-    const r = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${GTRANSLATE_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: text, target, format: "text" }),
-    });
-    const data = await r.json();
-    if (data && data.data && data.data.translations && data.data.translations[0]) {
-      return { ok:true, text: data.data.translations[0].translatedText };
+    // split into tokens, keeping separators (spaces, punctuation, brackets, digits)
+    const tokens = text.split(/([^A-Za-z]+)/); // letters vs non-letters
+    const out = [];
+    for (const tok of tokens) {
+      if (/^[A-Za-z]+$/.test(tok)) {
+        out.push(await transliterateWord(tok, target));
+      } else {
+        out.push(tok); // numbers, spaces, brackets, dots stay as-is
+      }
     }
-    return { ok:false, error: (data && data.error && data.error.message) || "Translation failed" };
+    return { ok:true, text: out.join("") };
   } catch(e) {
-    return { ok:false, error: e?.message || "Network error" };
+    return { ok:false, error: e?.message || "Transliteration failed" };
   }
 }
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6Z2Z5d2J5YXFqbmd6aWlpeWxzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MTc2NDcsImV4cCI6MjA5Njk5MzY0N30.JSEBtFqJPhl7Rd-gqwvM79nLOb0z6q9wcJpXZmWyNi4";
@@ -1642,6 +1656,14 @@ function billToRow(b) {
 function rowToBill(r) {
   return { id:r.id, jobberId:r.jobber_id||"", billNo:r.bill_no||"", billDate:r.bill_date||"", lines:r.lines||[], gross:r.gross||0, gstPct:r.gst_pct??5, gstAmt:r.gst_amt||0, roundOff:r.round_off||0, total:r.total||0, hasGst:!!r.has_gst, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
 }
+// Credit note: party_type "jobber" or "supplier"; party = jobberId or supplier name
+function cnToRow(c) {
+  return { id:c.id, party_type:c.partyType||"jobber", party:c.party||"", cn_no:c.cnNo||"", cn_date:c.cnDate||"", reason:c.reason||"", lines:c.lines||[], total:c.total||0, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+}
+function rowToCn(r) {
+  return { id:r.id, partyType:r.party_type||"jobber", party:r.party||"", cnNo:r.cn_no||"", cnDate:r.cn_date||"", reason:r.reason||"", lines:r.lines||[], total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+}
+function cnDesignNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
 function payToRow(p) {
   return { id:p.id, jobber_id:p.jobberId||"", date:p.date||"", amount:p.amount||0, mode:p.mode||"", channel:p.channel||"bank", note:p.note||"", created_by:p.createdBy||"", created_at_str:p.createdAtStr||"" };
 }
@@ -2502,10 +2524,11 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
 }
 
 // ── Fabric Purchases (master view across all designs + monthly totals) ────────
-function FabricSupplierLedger({ designs, payments, setPayments, showToast, currentUser }) {
+function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, setCreditNotes, showToast, currentUser }) {
   const [sel, setSel] = useState("");
   const [search, setSearch] = useState("");
   const [showPay, setShowPay] = useState(false);
+  const [showCN, setShowCN] = useState(false);
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
 
   // gather all fabric bills across designs, grouped by supplier name
@@ -2546,10 +2569,12 @@ function FabricSupplierLedger({ designs, payments, setPayments, showToast, curre
   // selected supplier ledger
   const bills = allBills.filter(b => b.supplier.trim()===sel);
   const myPays = payments.filter(p => p.jobberId===supPayId(sel));
+  const myCNs = (creditNotes||[]).filter(c => c.partyType==="supplier" && c.party===sel);
   const years = [...new Set([...bills.map(b=>yearOf(b.billDate)), ...myPays.map(p=>yearOf(p.date)), new Date().getFullYear()].filter(Boolean))].sort((a,b)=>b-a);
   const rows = [
     ...bills.filter(b=>yearOf(b.billDate)===yearFilter).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:+b.amount||0, credit:0 })),
     ...myPays.filter(p=>yearOf(p.date)===yearFilter).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+    ...myCNs.filter(c=>yearOf(c.cnDate)===yearFilter).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   let run=0; const withBal = rows.map(r=>{ run+=r.debit-r.credit; return {...r,balance:run}; });
   const totDebit = rows.reduce((a,r)=>a+r.debit,0), totCredit = rows.reduce((a,r)=>a+r.credit,0);
@@ -2572,6 +2597,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, showToast, curre
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <Btn label="+ Record Payment" onClick={()=>setShowPay(true)} color={T.green} textColor="#fff" small />
+        <Btn label="+ Credit Note" onClick={()=>setShowCN(true)} color={T.red} textColor="#fff" small />
         <Btn label="Export PDF" onClick={()=>{
           const w=window.open("","_blank"); if(!w){showToast("Allow popups","error");return;}
           const rws=withBal.map(r=>`<tr><td>${r.date||""}</td><td>${r.particulars}</td><td style="text-align:right">${r.debit?r.debit.toFixed(2):""}</td><td style="text-align:right;color:#0a0">${r.credit?r.credit.toFixed(2):""}</td><td style="text-align:right;font-weight:bold">${r.balance.toFixed(2)}</td></tr>`).join("");
@@ -2604,6 +2630,13 @@ function FabricSupplierLedger({ designs, payments, setPayments, showToast, curre
       </table>
 
       {showPay && <FabricPayModal supplier={sel} onClose={()=>setShowPay(false)} onSave={savePayment} />}
+      {showCN && <CreditNoteForm partyType="supplier" partyLabel={sel} designs={designs} currentUser={currentUser} onClose={()=>setShowCN(false)} onSave={async (cn) => {
+        const full = { ...cn, id:`CN${Date.now()}`, partyType:"supplier", party:sel, createdAtStr:nowStr() };
+        await dbUpsert("credit_notes", cnToRow(full));
+        setCreditNotes(p => [full, ...p]);
+        recordActivity(currentUser, "Credit note (supplier)", sel, `CN ${cn.cnNo} Rs.${cn.total} — ${cn.reason}`);
+        showToast("Credit note saved ✓"); setShowCN(false);
+      }} />}
     </div>
   );
 }
@@ -3354,11 +3387,12 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
 }
 
 // ── Bills + Payments + Dual Ledger ────────────────────────────────────────────
-function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments, challans, setChallans, showToast, currentUser }) {
+function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments, challans, setChallans, creditNotes, setCreditNotes, showToast, currentUser }) {
   const [selJ, setSelJ] = useState("");
   const [ledgerView, setLedgerView] = useState("bank");
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
   const [showBillForm, setShowBillForm] = useState(false);
+  const [showCNForm, setShowCNForm] = useState(false);
   const [showPayForm, setShowPayForm] = useState(false);
   const jList = jobbers.filter(j => j.role==="jobber");
   const j = jobbers.find(x => x.id===selJ);
@@ -3390,9 +3424,11 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
 
   // ── AUTO LEDGER: built directly from challans (debit) + payments (credit) ──
   const myChallans = (challans||[]).filter(c => c.jobberId===selJ && c.status!=="rejected" && yearOf(c.date)===yearFilter);
+  const myCNs = (creditNotes||[]).filter(c => c.partyType==="jobber" && c.party===selJ && yearOf(c.cnDate)===yearFilter);
   const acctRows = [
     ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}`, ref:c.challanNo||"", debit:challanTotal(c), credit:0 })),
     ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+    ...myCNs.map(c => ({ date:c.cnDate||"", kind:"credit", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
   let runBal = 0;
   const acctWithBal = acctRows.map(r => { runBal += r.debit - r.credit; return { ...r, balance:runBal }; });
@@ -3466,6 +3502,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
           <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
             <Btn label="+ New Bill" onClick={() => setShowBillForm(true)} />
             <Btn label="+ Record Payment" onClick={() => setShowPayForm(true)} color={T.green} textColor="#fff" />
+            <Btn label="+ Credit Note" onClick={() => setShowCNForm(true)} color={T.red} textColor="#fff" />
             <Btn label="Export PDF" onClick={exportPDF} color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.gold}44` }} />
           </div>
 
@@ -3590,6 +3627,13 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
         showToast("Bill saved ✓"); setShowBillForm(false);
       }} currentUser={currentUser} />}
           {showPayForm && <PaymentForm jobber={j} selJ={selJ} onClose={() => setShowPayForm(false)} onSave={async (pay) => { await dbUpsert("payments", payToRow(pay)); setPayments(p => [pay,...p]); recordActivity(currentUser, "Recorded payment", `Jobber ${j?.name||""}`, `Rs.${pay.amount} (${pay.channel})`); showToast("Payment recorded ✓"); setShowPayForm(false); }} currentUser={currentUser} />}
+          {showCNForm && <CreditNoteForm partyType="jobber" partyLabel={j?.name||""} designs={designs} currentUser={currentUser} onClose={()=>setShowCNForm(false)} onSave={async (cn) => {
+            const full = { ...cn, id:`CN${Date.now()}`, partyType:"jobber", party:selJ, createdAtStr:nowStr() };
+            await dbUpsert("credit_notes", cnToRow(full));
+            setCreditNotes(p => [full, ...p]);
+            recordActivity(currentUser, "Credit note (jobber)", j?.name||"", `CN ${cn.cnNo} Rs.${cn.total} — ${cn.reason}`);
+            showToast("Credit note saved ✓"); setShowCNForm(false);
+          }} />}
         </>
       )}
     </div>
@@ -3597,6 +3641,54 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
 }
 
 // ── Bill Form ─────────────────────────────────────────────────────────────────
+function CreditNoteForm({ partyType, partyLabel, designs, onClose, onSave, currentUser }) {
+  const [cnNo, setCnNo] = useState("");
+  const [cnDate, setCnDate] = useState(new Date().toISOString().slice(0,10));
+  const [reason, setReason] = useState("");
+  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]);
+  const REASONS = ["Damage claim","Rate difference","Short supply","Quality issue","Other"];
+  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]); }
+  function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
+  function updLine(id,k,v) { setLines(l => l.map(x => { if(x.id!==id) return x; const nx={...x,[k]:v}; const q=+nx.qty||0,r=+nx.rate||0; if(k==="qty"||k==="rate") nx.amount=(q*r)?String(q*r):nx.amount; return nx; })); }
+  const total = lines.reduce((a,l)=>a+(+l.amount||0),0);
+  const valid = lines.filter(l => l.designNo && l.amount);
+  function save() {
+    if (!cnNo || valid.length===0) return;
+    onSave({ cnNo, cnDate, reason, lines: valid.map(l=>({ designNo:String(l.designNo).trim(), qty:+l.qty||0, rate:+l.rate||0, amount:+l.amount||0 })), total, createdBy:currentUser });
+  }
+  return (
+    <Modal title={`New Credit Note — ${partyLabel}`} onClose={onClose}>
+      <div style={{ background:T.red+"15", border:`1px solid ${T.red}55`, borderRadius:8, padding:10, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.red }}>A credit note REDUCES what you owe {partyLabel} (claim/deduction). It shows on the credit side of their ledger.</div>
+      <div style={{ display:"flex", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+        <Inp label="Credit Note No *" value={cnNo} onChange={setCnNo} style={{ minWidth:140 }} />
+        <Inp label="Date" type="date" value={cnDate} onChange={setCnDate} style={{ minWidth:150 }} />
+        <Inp label="Reason *" value={reason} onChange={setReason} options={REASONS} style={{ minWidth:160 }} />
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Designs / amounts in this credit note</div>
+      {lines.map(l => (
+        <div key={l.id} style={{ display:"flex", gap:8, marginBottom:8, alignItems:"flex-end", flexWrap:"wrap" }}>
+          <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={designs.map(d=>d.designNo)} style={{ flex:2, minWidth:110 }} />
+          <Inp label="Qty" type="number" value={l.qty} onChange={v=>updLine(l.id,"qty",v)} style={{ width:70 }} />
+          <Inp label="Rate" type="number" value={l.rate} onChange={v=>updLine(l.id,"rate",v)} style={{ width:80 }} />
+          <Inp label="Amount" type="number" value={l.amount} onChange={v=>updLine(l.id,"amount",v)} style={{ width:90 }} />
+          {lines.length>1 && <Btn label="✕" onClick={()=>removeLine(l.id)} color={T.red+"22"} textColor={T.red} small />}
+        </div>
+      ))}
+      <Btn label="+ Add line" onClick={addLine} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}`, marginBottom:14 }} />
+      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:16 }}>
+        <div style={{ background:T.bg, borderRadius:8, padding:"10px 18px", border:`1px solid ${T.red}55` }}>
+          <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>CREDIT NOTE TOTAL: </span>
+          <span style={{ fontFamily:T.mono, fontSize:18, color:T.red, fontWeight:900 }}>Rs.{total}</span>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Credit Note" onClick={save} disabled={!cnNo||valid.length===0||!reason} color={T.red} textColor="#fff" />
+      </div>
+    </Modal>
+  );
+}
+
 function BillForm({ jobber, designs, selJ, suggestForDesign, challans = [], onClose, onSave, currentUser }) {
   const [billNo, setBillNo] = useState("");
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0,10));
@@ -4272,9 +4364,9 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
         {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} showToast={showToast} currentUser={currentUser} /></div></Section>}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
         {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
-        {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} /></Section>}
+        {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals" action={<PdfBtn targetId="rpt-fabric" title="Fabric Purchases" />}><div id="rpt-fabric"><FabricPurchases designs={designs} /></div></Section>}
-        {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} showToast={showToast} currentUser={currentUser} /></Section>}
+        {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
         {tab==="Search" && (
           <div>
@@ -4407,6 +4499,7 @@ export default function App() {
   const [people, setPeople] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [bills, setBills] = useState([]);
+  const [creditNotes, setCreditNotes] = useState([]);
   const [payments, setPayments] = useState([]);
   const [activityLog, setActivityLog] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -4417,8 +4510,8 @@ export default function App() {
 
   async function loadAll() {
     try {
-      const [pRows, dRows, mvRows, entRows, bRows, billRows, payRows, logRows, notifRows, chRows] = await Promise.all([
-        dbSelect("jobbers"), dbSelect("designs"), dbSelect("movements"), dbSelect("jobber_entries"), dbSelect("bookings"), dbSelect("bills"), dbSelect("payments"), dbSelect("activity_log"), dbSelect("notifications"), dbSelect("challans")
+      const [pRows, dRows, mvRows, entRows, bRows, billRows, payRows, logRows, notifRows, chRows, cnRows] = await Promise.all([
+        dbSelect("jobbers"), dbSelect("designs"), dbSelect("movements"), dbSelect("jobber_entries"), dbSelect("bookings"), dbSelect("bills"), dbSelect("payments"), dbSelect("activity_log"), dbSelect("notifications"), dbSelect("challans"), dbSelect("credit_notes")
       ]);
       const ppl = (pRows||[]).map(rowToJ);
       setPeople(ppl);
@@ -4434,6 +4527,7 @@ export default function App() {
       setActivityLog((logRows||[]).map(rowToLog).sort((a,b)=> (b.ts||"").localeCompare(a.ts||"")));
       setNotifications((notifRows||[]).map(rowToNotif).sort((a,b)=> (b.ts||"").localeCompare(a.ts||"")));
       setChallans((chRows||[]).map(rowToChallan));
+      setCreditNotes((cnRows||[]).map(rowToCn));
       setLoadInfo(`Loaded ${ppl.length} people, ${(dRows||[]).length} designs`);
     } catch(e) {
       setLoadInfo("Load error: " + (e?.message||e));
