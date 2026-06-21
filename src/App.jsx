@@ -2416,7 +2416,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))", gap:8, flex:1 }}>
                 <Inp label="Type" value={b.billType||"Fabric"} onChange={v => updFabricBill(b.id,"billType",v)} options={["Fabric","Trims"]} />
                 <Inp label="Bill Date" type="date" value={b.billDate} onChange={v => updFabricBill(b.id,"billDate",v)} />
-                <Inp label="Supplier" value={b.supplier} onChange={v => updFabricBill(b.id,"supplier",v)} placeholder="Supplier name" />
+                <div style={{ gridColumn:"1 / -1" }}><SupplierPicker value={b.supplier} onChange={v => updFabricBill(b.id,"supplier",v)} allSuppliers={designs.flatMap(dd=>(dd.supplierBills||[]).map(x=>x.supplier).filter(Boolean))} /></div>
                 <Inp label="Quantity (m)" type="number" value={b.qty} onChange={v => updFabricBill(b.id,"qty",v)} />
                 <Inp label="Rate" type="number" value={b.rate} onChange={v => updFabricBill(b.id,"rate",v)} />
                 <Inp label="Amount" type="number" value={b.amount} onChange={v => updFabricBill(b.id,"amount",v)} />
@@ -2797,6 +2797,64 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
   );
 }
 
+// Supplier name picker: name + city/market fields, auto-combined "Name (City)", with live suggestions
+function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier" }) {
+  // parse existing value "Name (City)" into parts
+  const m = (value||"").match(/^(.*?)\s*\(([^)]*)\)\s*$/);
+  const initName = m ? m[1].trim() : (value||"");
+  const initCity = m ? m[2].trim() : "";
+  const [name, setName] = useState(initName);
+  const [city, setCity] = useState(initCity);
+  const [focus, setFocus] = useState(false);
+  function emit(n, c) {
+    const combined = c.trim() ? `${n.trim()} (${c.trim()})` : n.trim();
+    onChange(combined);
+  }
+  // unique existing names (without forcing duplicates)
+  const names = [...new Set(allSuppliers.filter(Boolean))];
+  const matches = name.trim().length>0
+    ? names.filter(s => s.toLowerCase().includes(name.trim().toLowerCase()) && s.toLowerCase()!==`${name.trim().toLowerCase()}${city.trim()?` (${city.trim().toLowerCase()})`:""}`).slice(0,6)
+    : [];
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+        <div style={{ position:"relative", flex:"2 1 160px" }}>
+          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:4 }}>{label} Name *</label>
+          <input
+            value={name}
+            onChange={e => { setName(e.target.value); emit(e.target.value, city); }}
+            onFocus={()=>setFocus(true)}
+            onBlur={()=>setTimeout(()=>setFocus(false),150)}
+            placeholder="type name (suggestions appear)"
+            style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}
+          />
+          {focus && matches.length>0 && (
+            <div style={{ position:"absolute", top:"100%", left:0, right:0, background:T.card, border:`1px solid ${T.gold}`, borderRadius:6, marginTop:2, zIndex:50, maxHeight:180, overflowY:"auto" }}>
+              {matches.map(s => (
+                <div key={s} onMouseDown={()=>{
+                  const mm = s.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
+                  const sn = mm ? mm[1].trim() : s; const sc = mm ? mm[2].trim() : "";
+                  setName(sn); setCity(sc); onChange(s); setFocus(false);
+                }} style={{ padding:"8px 12px", cursor:"pointer", color:T.text, fontSize:13, borderBottom:`1px solid ${T.border}` }}>{s}</div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ flex:"1 1 110px" }}>
+          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:4 }}>City / Market</label>
+          <input
+            value={city}
+            onChange={e => { setCity(e.target.value); emit(name, e.target.value); }}
+            placeholder="e.g. Surat / Ring Road"
+            style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}
+          />
+        </div>
+      </div>
+      {(name.trim()) && <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold }}>Saved as: {city.trim()?`${name.trim()} (${city.trim()})`:name.trim()}</div>}
+    </div>
+  );
+}
+
 function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onClose }) {
   const [designNo, setDesignNo] = useState("");
   const [form, setForm] = useState({ billType:"Fabric", supplier:"", billNo:"", billDate:new Date().toISOString().slice(0,10), lrNo:"", transporter:"", qty:"", rate:"" });
@@ -2821,9 +2879,11 @@ function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onCl
         <input value={designNo} onChange={e=>setDesignNo(e.target.value)} list="rp-designs" placeholder="type or pick design no" style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }} />
         <datalist id="rp-designs">{designs.map(d => <option key={d.id} value={d.designNo} />)}</datalist>
       </div>
+      <div style={{ marginBottom:14 }}>
+        <SupplierPicker value={form.supplier} onChange={upd("supplier")} allSuppliers={designs.flatMap(d=>(d.supplierBills||[]).map(b=>b.supplier).filter(Boolean))} />
+      </div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
         <Inp label="Type" value={form.billType} onChange={upd("billType")} options={["Fabric","Trims"]} />
-        <Inp label="Supplier *" value={form.supplier} onChange={upd("supplier")} />
         <Inp label="Bill No" value={form.billNo} onChange={upd("billNo")} />
         <Inp label="Bill Date" type="date" value={form.billDate} onChange={upd("billDate")} />
         <Inp label="Qty (meters)" type="number" value={form.qty} onChange={upd("qty")} />
