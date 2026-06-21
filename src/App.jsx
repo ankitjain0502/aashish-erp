@@ -1,24 +1,21 @@
 import { useState, useRef, useEffect, Fragment } from "react";
 
 const SUPA_URL = "https://izgfywbyaqjngziiiyls.supabase.co";
-const GTRANSLATE_KEY = "AIzaSyD5RnT37HyQYE-qCM2MvABCRzYjFJUE7Js";
+// Transliteration uses Google's free Input Tools (no API key / no Cloud project needed)
 // Translate text to target language (hi/gu). Brackets () and Hinglish handled by Google's transliteration.
 // Transliterate a single romanized word to target script (hi/gu) using Google Input Tools (free, no key)
 async function transliterateWord(word, target) {
   const itc = target==="gu" ? "gu-t-i0-und" : "hi-t-i0-und";
-  try {
-    const r = await fetch(`https://inputtools.google.com/request?text=${encodeURIComponent(word)}&itc=${itc}&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8`);
-    const data = await r.json();
-    if (data && data[0]==="SUCCESS" && data[1] && data[1][0] && data[1][0][1] && data[1][0][1][0]) {
-      return data[1][0][1][0];
-    }
-  } catch(e) {}
-  return word; // fallback: keep original
+  const r = await fetch(`https://inputtools.google.com/request?text=${encodeURIComponent(word)}&itc=${itc}&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8`);
+  const data = await r.json();
+  if (data && data[0]==="SUCCESS" && data[1] && data[1][0] && data[1][0][1] && data[1][0][1][0]) {
+    return data[1][0][1][0];
+  }
+  return word; // fallback: keep original word if no suggestion
 }
 // Transliterate a whole instruction text to target script, word by word, preserving numbers/punctuation/brackets
 async function googleTranslate(text, target) {
   try {
-    // split into tokens, keeping separators (spaces, punctuation, brackets, digits)
     const tokens = text.split(/([^A-Za-z]+)/); // letters vs non-letters
     const out = [];
     for (const tok of tokens) {
@@ -30,7 +27,7 @@ async function googleTranslate(text, target) {
     }
     return { ok:true, text: out.join("") };
   } catch(e) {
-    return { ok:false, error: e?.message || "Transliteration failed" };
+    return { ok:false, error: "Translation service is temporarily unreachable. Please check your internet and try again." };
   }
 }
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6Z2Z5d2J5YXFqbmd6aWlpeWxzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MTc2NDcsImV4cCI6MjA5Njk5MzY0N30.JSEBtFqJPhl7Rd-gqwvM79nLOb0z6q9wcJpXZmWyNi4";
