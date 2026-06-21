@@ -209,7 +209,7 @@ function dToRow(d) {
     specs: (d.specs||[]).map(sp => ({ key:sp.key, text:sp.text||"", thumb:"" })),
     ratio: d.ratio||{}, trims: d.trims||"", drawing_avg: d.drawingAvg||"", main_thumb: "", manual_avg: { ...(d.manualAvg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }), _formOrder: d.formOrder||[] },
     date_program: d.dateProgram||"", date_cut: d.dateCut||"",
-    notes: d.notes||"", keywords: d.keywords||"", instructions: d.instructions||"", active_colors: d.activeColors||[],
+    notes: d.notes||"", keywords: d.keywords||"", instructions: d.instructions||"", custom_sizes: d.customSizes||[], active_colors: d.activeColors||[],
     colors: (d.colors||[]).map(c => ({ ...c, swatch: "" })),
     processes: d.processes||{},
     photos: (d.photos||[]).map(p => ({ id: p.id, note: p.note, date: p.date, src: "" })),
@@ -233,7 +233,7 @@ function rowToD(r) {
     hasPocket: !!r.has_pocket, hasButtons: !!r.has_buttons, hasLabel: !!r.has_label,
     specs: r.specs||[], ratio: r.ratio||{}, trims: r.trims||"", drawingAvg: r.drawing_avg||"", mainThumb: r.main_thumb||"", manualAvg: r.manual_avg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, formOrder: (r.manual_avg&&r.manual_avg._formOrder)||[],
     dateProgram: r.date_program||"", dateCut: r.date_cut||"",
-    notes: r.notes||"", keywords: r.keywords||"", instructions: r.instructions||"", activeColors: r.active_colors||[], colors: r.colors||[],
+    notes: r.notes||"", keywords: r.keywords||"", instructions: r.instructions||"", customSizes: r.custom_sizes||[], activeColors: r.active_colors||[], colors: r.colors||[],
     processes: r.processes||{}, photos: r.photos||[],
     supplierBills: r.supplier_bills||[], customerOrders: r.customer_orders||[],
     movements: [], jobberEntries: [], status: r.status||"New", mrpFinalized: !!r.mrp_finalized,
@@ -674,12 +674,20 @@ function SendToModal({ design, people, fromJobber, onClose, onSend, L = (x)=>x, 
 // ── Averages display block (Cost + Net + manual) ─────────────────────────────
 function AveragesBlock({ design }) {
   const ma = design.manualAvg || {};
+  // dynamic group averages matching the design form (only selected sizes)
+  const ALL = [...SIZES, ...((design.customSizes)||[])];
+  const baseGroup = ["S","M","L","XL","XXL"];
+  const rest = ALL.filter(s => !baseGroup.includes(s));
+  const groups = [baseGroup];
+  for (let i=0;i<rest.length;i+=3) groups.push(rest.slice(i,i+3));
+  const active = design.activeColors||[];
+  const visibleGroups = groups.map(g => g.filter(s => active.includes(s))).filter(g => g.length>0);
+  const groupKey = g => "g_"+g.join("_");
+  const groupLabel = g => g.length===1 ? g[0] : `${g[0]}–${g[g.length-1]}`;
   const items = [
     ["Cost Avg (total ÷ pcs)", fabricAverage(design)||"—", T.gold],
     ["Net Avg (less sample)", fabricAverageNet(design)||"—", T.green],
-    ["Avg S–XXL", ma.smxxl||"—", T.steelLt],
-    ["Avg 3XL–5XL", ma.x3to5||"—", T.steelLt],
-    [(ma.bigLabel||"6XL+"), ma.big||"—", T.steelLt],
+    ...visibleGroups.map(g => [`Avg ${groupLabel(g)}`, ma[groupKey(g)] || ma.smxxl || "—", T.steelLt]),
     ["Drawing Avg", design.drawingAvg||"—", T.steelLt],
   ];
   return (
@@ -2122,7 +2130,7 @@ function FabricBillPhoto({ bill, onPick }) {
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
 function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [] }) {
-  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
+  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", customSizes:[], photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
   const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","instructions","fabricbill","photos","process","note"];
   // GLOBAL order: once anyone reorders, it becomes the default for all designs (this session + saved on each design)
@@ -2158,6 +2166,17 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
   function removeBillDesign(billId, idx) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:(b.appliesTo||[]).filter((x,i)=>i!==idx)} : b)})); }
   function fabricBillPhoto(id, file) { if(!file) return; compressImage(file).then(src => updFabricBill(id,"photo",src)).catch(()=>{}); }
   function toggleSize(s) { setD(f => ({...f, activeColors:f.activeColors.includes(s)?f.activeColors.filter(x=>x!==s):[...f.activeColors,s]})); }
+  function addCustomSize() {
+    const name = (prompt("Enter new size name (e.g. 10XL, 11XL, Free Size):")||"").trim();
+    if (!name) return;
+    setD(f => {
+      if ((f.customSizes||[]).includes(name) || SIZES.includes(name)) { alert("That size already exists."); return f; }
+      return { ...f, customSizes:[...(f.customSizes||[]), name], activeColors:[...f.activeColors, name] };
+    });
+  }
+  function removeCustomSize(name) {
+    setD(f => ({ ...f, customSizes:(f.customSizes||[]).filter(x=>x!==name), activeColors:f.activeColors.filter(x=>x!==name) }));
+  }
   function ensureSpecs(arr) { return SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"" }); }
   function updSpec(key, field, v) { setD(f => ({ ...f, specs: ensureSpecs(f.specs).map(sp => sp.key===key ? {...sp,[field]:v} : sp) })); }
   function updRatio(sz, v) { setD(f => ({ ...f, ratio: { ...(f.ratio||{}), [sz]: v } })); }
@@ -2213,16 +2232,31 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
       <div {...dragHandle("avg")}>
         {handleBar}
       <Section title="Fabric Average — Manual Entry">
-        <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>Auto average = (fabric + trims) ÷ pieces, calculated automatically when sizes are filled. Below are your manual averages per size group.</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))", gap:12 }}>
-          <Inp label="Average S–XXL" value={(d.manualAvg||{}).smxxl||""} onChange={v => updManualAvg("smxxl",v)} placeholder="e.g. 1.45" />
-          <Inp label="Average 3XL–5XL" value={(d.manualAvg||{}).x3to5||""} onChange={v => updManualAvg("x3to5",v)} placeholder="e.g. 1.70" />
-          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-            <input value={(d.manualAvg||{}).bigLabel||"6XL+"} onChange={e => updManualAvg("bigLabel",e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.gold, fontFamily:T.mono, fontSize:10, padding:"4px 8px", textTransform:"uppercase" }} />
-            <input value={(d.manualAvg||{}).big||""} onChange={e => updManualAvg("big",e.target.value)} placeholder="e.g. 2.00" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px" }} />
-          </div>
-          <Inp label="Drawing Average" value={d.drawingAvg} onChange={upd("drawingAvg")} placeholder="manual" />
-        </div>
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:10 }}>One average per size-group. Only groups containing your selected (active) sizes are shown. Default grouping: S–XXL together, then in 3s.</div>
+        {(() => {
+          // groups: first is S-XXL (the 5 base sizes), then groups of 3
+          const ALL = [...SIZES, ...((d.customSizes)||[])];
+          const baseGroup = ["S","M","L","XL","XXL"];
+          const rest = ALL.filter(s => !baseGroup.includes(s));
+          const groups = [baseGroup];
+          for (let i=0;i<rest.length;i+=3) groups.push(rest.slice(i,i+3));
+          // keep only groups that have at least one ACTIVE (selected) size
+          const active = d.activeColors||[];
+          const visibleGroups = groups
+            .map(g => g.filter(s => active.includes(s)))
+            .filter(g => g.length>0);
+          if (visibleGroups.length===0) return <div style={{ color:T.textDim, fontFamily:T.mono, fontSize:11 }}>Select sizes in "Active Sizes" first — average boxes appear here for the selected sizes.</div>;
+          const groupKey = g => "g_"+g.join("_");
+          const groupLabel = g => g.length===1 ? g[0] : `${g[0]}–${g[g.length-1]}`;
+          return (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))", gap:12 }}>
+              {visibleGroups.map(g => (
+                <Inp key={groupKey(g)} label={`Average ${groupLabel(g)} (${g.join(", ")})`} type="number" value={(d.manualAvg||{})[groupKey(g)]||""} onChange={v => updManualAvg(groupKey(g),v)} placeholder="e.g. 1.45" />
+              ))}
+              <Inp label="Drawing Average" value={d.drawingAvg} onChange={upd("drawingAvg")} placeholder="manual" />
+            </div>
+          );
+        })()}
       </Section>
       </div>
       <div {...dragHandle("specs")}>
@@ -2255,8 +2289,15 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
           {SIZES.map(s => (
             <button key={s} onClick={() => toggleSize(s)} style={{ background:d.activeColors.includes(s)?T.gold:T.surface, color:d.activeColors.includes(s)?T.bg:T.steelLt, border:`1px solid ${T.border}`, borderRadius:6, fontFamily:T.mono, fontWeight:700, fontSize:12, padding:"6px 14px", cursor:"pointer" }}>{s}</button>
           ))}
+          {(d.customSizes||[]).map(s => (
+            <span key={s} style={{ display:"inline-flex", alignItems:"center", gap:6, background:d.activeColors.includes(s)?T.gold:T.surface, color:d.activeColors.includes(s)?T.bg:T.steelLt, border:`1px solid ${T.gold}`, borderRadius:6, fontFamily:T.mono, fontWeight:700, fontSize:12, padding:"6px 10px" }}>
+              <button onClick={() => toggleSize(s)} style={{ background:"none", border:"none", color:"inherit", cursor:"pointer", fontFamily:T.mono, fontWeight:700, fontSize:12, padding:0 }}>{s}</button>
+              <button onClick={() => removeCustomSize(s)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:13, padding:0, lineHeight:1 }}>×</button>
+            </span>
+          ))}
+          <Btn label="+ Add custom size" onClick={addCustomSize} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.gold}` }} />
         </div>
-        <div style={{ marginTop:8, fontFamily:T.mono, fontSize:10, color:T.textDim }}>Note: actual cut quantities per size are filled later by the jobber.</div>
+        <div style={{ marginTop:8, fontFamily:T.mono, fontSize:10, color:T.textDim }}>Custom sizes (over 9XL) appear in the Fabric Average section grouped in 3s. Actual cut quantities per size are filled later by the jobber.</div>
       </Section>
       </div>
       <div {...dragHandle("ratio")}>
