@@ -209,7 +209,7 @@ function dToRow(d) {
     specs: (d.specs||[]).map(sp => ({ key:sp.key, text:sp.text||"", thumb:"" })),
     ratio: d.ratio||{}, trims: d.trims||"", drawing_avg: d.drawingAvg||"", main_thumb: "", manual_avg: { ...(d.manualAvg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }), _formOrder: d.formOrder||[] },
     date_program: d.dateProgram||"", date_cut: d.dateCut||"",
-    notes: d.notes||"", keywords: d.keywords||"", active_colors: d.activeColors||[],
+    notes: d.notes||"", keywords: d.keywords||"", instructions: d.instructions||"", active_colors: d.activeColors||[],
     colors: (d.colors||[]).map(c => ({ ...c, swatch: "" })),
     processes: d.processes||{},
     photos: (d.photos||[]).map(p => ({ id: p.id, note: p.note, date: p.date, src: "" })),
@@ -233,7 +233,7 @@ function rowToD(r) {
     hasPocket: !!r.has_pocket, hasButtons: !!r.has_buttons, hasLabel: !!r.has_label,
     specs: r.specs||[], ratio: r.ratio||{}, trims: r.trims||"", drawingAvg: r.drawing_avg||"", mainThumb: r.main_thumb||"", manualAvg: r.manual_avg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, formOrder: (r.manual_avg&&r.manual_avg._formOrder)||[],
     dateProgram: r.date_program||"", dateCut: r.date_cut||"",
-    notes: r.notes||"", keywords: r.keywords||"", activeColors: r.active_colors||[], colors: r.colors||[],
+    notes: r.notes||"", keywords: r.keywords||"", instructions: r.instructions||"", activeColors: r.active_colors||[], colors: r.colors||[],
     processes: r.processes||{}, photos: r.photos||[],
     supplierBills: r.supplier_bills||[], customerOrders: r.customer_orders||[],
     movements: [], jobberEntries: [], status: r.status||"New", mrpFinalized: !!r.mrp_finalized,
@@ -586,6 +586,7 @@ const TRANSLATIONS = {
   // ── Section / tab titles ──
   "Design Identity": { hi:"डिज़ाइन पहचान" },
   "Color Swatches": { hi:"रंग के नमूने" },
+  "Shirt Making Instructions": { hi:"शर्ट बनाने के निर्देश" },
   "Customer Orders": { hi:"ग्राहक ऑर्डर" },
   "Movement Log": { hi:"मूवमेंट लॉग" },
   "Job Sheet": { hi:"जॉब शीट" },
@@ -711,6 +712,17 @@ function JobSheetView({ design }) {
         <div><span style={{ color:T.steelLt }}>Shrinkage: </span><span style={{ color:T.white }}>Length {design.shrinkageLen} · Width {design.shrinkageWid}</span></div>
         <div><span style={{ color:T.steelLt }}>Supplier: </span><span style={{ color:T.white }}>{design.supplier}</span></div>
       </div>
+      {(design.instructions||"").trim() && (() => {
+        const points = (design.instructions||"").split(/\n|(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+        return (
+          <div style={{ background:T.gold+"12", border:`1px solid ${T.gold}55`, borderRadius:8, padding:14, marginBottom:16 }}>
+            <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Shirt Making Instructions</div>
+            <ol style={{ margin:0, paddingLeft:22, color:T.text, fontSize:13, lineHeight:1.9 }}>
+              {points.map((p,i) => <li key={i} style={{ marginBottom:3 }}>{p}</li>)}
+            </ol>
+          </div>
+        );
+      })()}
       {(design.specs||[]).some(sp => sp.text || sp.thumb) && (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:10, marginBottom:14 }}>
           {(design.specs||[]).filter(sp => sp.text || sp.thumb).map(sp => (
@@ -2110,10 +2122,14 @@ function FabricBillPhoto({ bill, onPick }) {
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
 function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [] }) {
-  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
+  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
-  const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","fabricbill","photos","process","note"];
-  const [secOrder, setSecOrder] = useState(() => (existing && existing.formOrder && existing.formOrder.length===DEFAULT_ORDER.length) ? existing.formOrder : DEFAULT_ORDER);
+  const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","instructions","fabricbill","photos","process","note"];
+  // GLOBAL order: once anyone reorders, it becomes the default for all designs (this session + saved on each design)
+  const startOrder = (window.__erpFormOrder && window.__erpFormOrder.length===DEFAULT_ORDER.length)
+    ? window.__erpFormOrder
+    : ((existing && existing.formOrder && existing.formOrder.length===DEFAULT_ORDER.length) ? existing.formOrder : DEFAULT_ORDER);
+  const [secOrder, setSecOrder] = useState(startOrder);
   const [dragKey, setDragKey] = useState(null);
   function onDrop(targetKey) {
     if (!dragKey || dragKey===targetKey) return;
@@ -2121,6 +2137,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
       const arr = [...order];
       const from = arr.indexOf(dragKey), to = arr.indexOf(targetKey);
       arr.splice(from,1); arr.splice(to,0,dragKey);
+      window.__erpFormOrder = arr; // remember globally for all designs this session
       return arr;
     });
     setDragKey(null);
@@ -2279,6 +2296,36 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
         </div>
       </Section>
       </div>
+      <div {...dragHandle("instructions")}>
+        {handleBar}
+      <Section title="Shirt Making Instructions">
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:8 }}>Type instructions. Each new line or full-stop becomes a numbered point automatically.</div>
+        <textarea
+          value={d.instructions||""}
+          onChange={e => upd("instructions")(e.target.value)}
+          placeholder={"e.g. Use single needle for collar. Attach pocket 2 inch from placket. Buttons must be YKK."}
+          rows={5}
+          style={{ width:"100%", boxSizing:"border-box", background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.sans, fontSize:14, padding:"10px 12px", lineHeight:1.6, outline:"none", resize:"vertical" }}
+        />
+        {/* numbered preview */}
+        {(d.instructions||"").trim() && (() => {
+          const points = (d.instructions||"").split(/\n|(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+          return (
+            <div style={{ background:T.bg, borderRadius:8, padding:14, marginTop:10, border:`1px solid ${T.border}` }}>
+              <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Preview — numbered points</div>
+              <ol style={{ margin:0, paddingLeft:22, color:T.text, fontSize:14, lineHeight:1.9 }}>
+                {points.map((p,i) => <li key={i} style={{ marginBottom:4 }}>{p}</li>)}
+              </ol>
+              <div style={{ display:"flex", gap:8, marginTop:12, flexWrap:"wrap" }}>
+                <Btn label="Translate → Hindi" small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} onClick={() => window.open(`https://translate.google.com/?sl=en&tl=hi&text=${encodeURIComponent(points.map((p,i)=>`${i+1}. ${p}`).join("\n"))}&op=translate`,"_blank")} />
+                <Btn label="Translate → Gujarati" small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} onClick={() => window.open(`https://translate.google.com/?sl=en&tl=gu&text=${encodeURIComponent(points.map((p,i)=>`${i+1}. ${p}`).join("\n"))}&op=translate`,"_blank")} />
+              </div>
+              <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:6 }}>Translation opens in Google Translate — pick the language, copy the result back if you want to save it.</div>
+            </div>
+          );
+        })()}
+      </Section>
+      </div>
       <div {...dragHandle("fabricbill")}>
         {handleBar}
       <Section title="Fabric Supplier Bill (required)" action={<Btn label="+ Add Fabric Bill" onClick={addFabricBill} small />}>
@@ -2286,7 +2333,10 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
         {(d.supplierBills||[]).length===0 && <div style={{ color:T.orange, fontSize:12, marginBottom:8 }}>⚠ Add at least one fabric supplier bill.</div>}
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {(d.supplierBills||[]).map((b,bi) => (
-            <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${T.border}`, display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+            <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${b.billNo && b.billNo.trim() ? T.green : T.orange}`, display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+              <div style={{ position:"absolute", marginTop:-22, marginLeft:0 }}>
+                <Badge label={b.billNo && b.billNo.trim() ? "✓ COMPLETE" : "⚠ INCOMPLETE — add Bill No"} color={b.billNo && b.billNo.trim() ? T.green : T.orange} />
+              </div>
               <FabricBillPhoto bill={b} onPick={file => fabricBillPhoto(b.id, file)} />
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))", gap:8, flex:1 }}>
                 <Inp label="Type" value={b.billType||"Fabric"} onChange={v => updFabricBill(b.id,"billType",v)} options={["Fabric","Trims"]} />
@@ -2297,6 +2347,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                 <Inp label="Amount" type="number" value={b.amount} onChange={v => updFabricBill(b.id,"amount",v)} />
                 <Inp label="Bill No" value={b.billNo} onChange={v => updFabricBill(b.id,"billNo",v)} />
                 <Inp label="LR No" value={b.lrNo} onChange={v => updFabricBill(b.id,"lrNo",v)} />
+                <Inp label="Transporter" value={b.transporter||""} onChange={v => updFabricBill(b.id,"transporter",v)} placeholder="transporter name" />
               </div>
               {/* This bill also covers other designs (split meters) */}
               <div style={{ background:T.bg, borderRadius:6, padding:10, marginTop:8, marginBottom:8 }}>
@@ -2395,6 +2446,133 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
 }
 
 // ── Fabric Purchases (master view across all designs + monthly totals) ────────
+function FabricSupplierLedger({ designs, payments, setPayments, showToast, currentUser }) {
+  const [sel, setSel] = useState("");
+  const [search, setSearch] = useState("");
+  const [showPay, setShowPay] = useState(false);
+  const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
+
+  // gather all fabric bills across designs, grouped by supplier name
+  const allBills = [];
+  designs.forEach(d => (d.supplierBills||[]).forEach(b => { if (b.supplier && b.supplier.trim()) allBills.push({ ...b, designNo:b.designNo||d.designNo }); }));
+  const supplierNames = [...new Set(allBills.map(b => b.supplier.trim()))].sort();
+  const filteredNames = search.length>0 ? supplierNames.filter(n => n.toLowerCase().includes(search.toLowerCase())) : supplierNames;
+
+  const supPayId = name => "SUP:"+name;
+  const yearOf = s => { const m=(s||"").match(/(\d{4})/); return m?+m[1]:null; };
+
+  if (!sel) {
+    return (
+      <div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search fabric supplier by name..." style={{ background:T.card, border:`2px solid ${T.gold}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:14, padding:"10px 16px", width:"100%", boxSizing:"border-box", outline:"none", marginBottom:16 }} />
+        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Fabric Suppliers ({filteredNames.length}) — tap to open ledger</div>
+        {filteredNames.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>No fabric suppliers found. They appear automatically from fabric bills.</div>}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12 }}>
+          {filteredNames.map(name => {
+            const bills = allBills.filter(b => b.supplier.trim()===name);
+            const billed = bills.reduce((a,b)=>a+(+b.amount||0),0);
+            const paid = payments.filter(p=>p.jobberId===supPayId(name)).reduce((a,p)=>a+(+p.amount||0),0);
+            const bal = billed-paid;
+            return (
+              <div key={name} onClick={()=>setSel(name)} style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, borderLeft:`4px solid ${bal>0?T.red:T.green}`, padding:16, cursor:"pointer" }}>
+                <div style={{ color:T.white, fontWeight:700, fontSize:15, marginBottom:6 }}>{name}</div>
+                <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Purchases: <b style={{color:T.white}}>Rs.{billed.toFixed(0)}</b></div>
+                <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Paid: <b style={{color:T.green}}>Rs.{paid.toFixed(0)}</b></div>
+                <div style={{ fontFamily:T.mono, fontSize:13, color:bal>0?T.red:T.green, fontWeight:700, marginTop:4 }}>Balance: Rs.{bal.toFixed(0)}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // selected supplier ledger
+  const bills = allBills.filter(b => b.supplier.trim()===sel);
+  const myPays = payments.filter(p => p.jobberId===supPayId(sel));
+  const years = [...new Set([...bills.map(b=>yearOf(b.billDate)), ...myPays.map(p=>yearOf(p.date)), new Date().getFullYear()].filter(Boolean))].sort((a,b)=>b-a);
+  const rows = [
+    ...bills.filter(b=>yearOf(b.billDate)===yearFilter).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:+b.amount||0, credit:0 })),
+    ...myPays.filter(p=>yearOf(p.date)===yearFilter).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+  ].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  let run=0; const withBal = rows.map(r=>{ run+=r.debit-r.credit; return {...r,balance:run}; });
+  const totDebit = rows.reduce((a,r)=>a+r.debit,0), totCredit = rows.reduce((a,r)=>a+r.credit,0);
+
+  async function savePayment(amount, date, mode, note) {
+    const p = { id:`PAY${Date.now()}`, jobberId:supPayId(sel), date, amount:+amount, mode, channel:"bank", note, createdBy:currentUser, createdAtStr:nowStr() };
+    await dbUpsert("payments", payToRow(p));
+    setPayments(prev => [p, ...prev]);
+    recordActivity(currentUser, "Fabric supplier payment", sel, `Rs.${amount}`);
+    showToast("Payment recorded ✓");
+    setShowPay(false);
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16, flexWrap:"wrap" }}>
+        <Btn label="← Back to suppliers" onClick={()=>setSel("")} color={T.surface} textColor={T.steelLt} small />
+        <span style={{ color:T.white, fontWeight:700, fontSize:18 }}>{sel}</span>
+        <select value={yearFilter} onChange={e=>setYearFilter(+e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:12 }}>
+          {years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <Btn label="+ Record Payment" onClick={()=>setShowPay(true)} color={T.green} textColor="#fff" small />
+        <Btn label="Export PDF" onClick={()=>{
+          const w=window.open("","_blank"); if(!w){showToast("Allow popups","error");return;}
+          const rws=withBal.map(r=>`<tr><td>${r.date||""}</td><td>${r.particulars}</td><td style="text-align:right">${r.debit?r.debit.toFixed(2):""}</td><td style="text-align:right;color:#0a0">${r.credit?r.credit.toFixed(2):""}</td><td style="text-align:right;font-weight:bold">${r.balance.toFixed(2)}</td></tr>`).join("");
+          w.document.write(`<html><head><title>${sel}</title><style>body{font-family:Arial;padding:24px}h1{font-size:20px;margin:0}h2{font-size:13px;color:#555;margin:4px 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#f0f0f0}</style></head><body><h1>AASHISH APPARELS — Fabric Supplier Account</h1><h2>Supplier: ${sel} · Year: ${yearFilter} · Printed: ${new Date().toLocaleDateString()}</h2><table><thead><tr><th>Date</th><th>Particulars</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th><th style="text-align:right">Balance</th></tr></thead><tbody>${rws}</tbody><tfoot><tr style="font-weight:bold;background:#f8f8f8"><td colspan=2>TOTAL</td><td style="text-align:right">${totDebit.toFixed(2)}</td><td style="text-align:right">${totCredit.toFixed(2)}</td><td style="text-align:right">${(totDebit-totCredit).toFixed(2)}</td></tr></tfoot></table></body></html>`);
+          w.document.close(); setTimeout(()=>w.print(),300);
+        }} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.border}` }} />
+      </div>
+
+      <div style={{ display:"flex", gap:14, marginBottom:16, flexWrap:"wrap" }}>
+        <div style={{ background:T.surface, borderRadius:8, padding:"12px 18px", borderLeft:`3px solid ${T.gold}`, minWidth:150 }}><div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL PURCHASES</div><div style={{ fontFamily:T.mono, fontSize:17, fontWeight:900, color:T.white }}>Rs.{totDebit.toFixed(0)}</div></div>
+        <div style={{ background:T.surface, borderRadius:8, padding:"12px 18px", borderLeft:`3px solid ${T.green}`, minWidth:150 }}><div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL PAID</div><div style={{ fontFamily:T.mono, fontSize:17, fontWeight:900, color:T.green }}>Rs.{totCredit.toFixed(0)}</div></div>
+        <div style={{ background:T.surface, borderRadius:8, padding:"12px 18px", borderLeft:`3px solid ${(totDebit-totCredit)>0?T.red:T.green}`, minWidth:150 }}><div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>BALANCE DUE</div><div style={{ fontFamily:T.mono, fontSize:17, fontWeight:900, color:(totDebit-totCredit)>0?T.red:T.green }}>Rs.{(totDebit-totCredit).toFixed(0)}</div></div>
+      </div>
+
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+        <thead><tr style={{ background:T.surface }}>{["Date","Particulars","Bill No","Debit","Credit","Balance"].map(h=><th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+        <tbody>
+          {withBal.length===0 && <tr><td colSpan={6} style={{ padding:16, textAlign:"center", color:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}` }}>No entries for {yearFilter}.</td></tr>}
+          {withBal.map((r,i)=>(
+            <tr key={i} style={{ background:i%2===0?T.card:T.surface }}>
+              <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.date}</td>
+              <td style={{ padding:"8px 10px", color:T.white, border:`1px solid ${T.border}` }}>{r.particulars}</td>
+              <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.ref||"—"}</td>
+              <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.debit?`Rs.${r.debit.toFixed(2)}`:""}</td>
+              <td style={{ padding:"8px 10px", color:T.green, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.credit?`Rs.${r.credit.toFixed(2)}`:""}</td>
+              <td style={{ padding:"8px 10px", color:r.balance>0?T.red:T.green, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>Rs.{r.balance.toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {showPay && <FabricPayModal supplier={sel} onClose={()=>setShowPay(false)} onSave={savePayment} />}
+    </div>
+  );
+}
+
+function FabricPayModal({ supplier, onClose, onSave }) {
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [mode, setMode] = useState("UPI");
+  const [note, setNote] = useState("");
+  return (
+    <Modal title={`Payment to ${supplier}`} onClose={onClose}>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+        <Inp label="Date" type="date" value={date} onChange={setDate} />
+        <Inp label="Amount (Rs.)" type="number" value={amount} onChange={setAmount} />
+        <Inp label="Mode" value={mode} onChange={setMode} options={["UPI","Bank Transfer","Cheque","NEFT/RTGS","Cash"]} />
+        <Inp label="Note" value={note} onChange={setNote} placeholder="optional" />
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Payment" onClick={()=>amount&&onSave(amount,date,mode,note)} disabled={!amount} color={T.green} textColor="#fff" />
+      </div>
+    </Modal>
+  );
+}
+
 function FabricPurchases({ designs }) {
   const [monthFilter, setMonthFilter] = useState("");
   const all = [];
@@ -3786,7 +3964,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return j;
   }
 
-  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
+  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
 
   async function sendLot(mv) {
     if (!sel) return;
@@ -3843,6 +4021,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
   const peopleResults = search.length > 1 ? people.filter(p =>
     (p.name||"").toLowerCase().includes(sl) || (p.prefix||"").toLowerCase().includes(sl)
   ) : [];
+  const fabricSupplierResults = search.length > 1 ? [...new Set(designs.flatMap(d => (d.supplierBills||[]).map(b => b.supplier).filter(Boolean)))].filter(n => n.toLowerCase().includes(sl)) : [];
 
   if (creating || editing) {
     return (
@@ -3950,6 +4129,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
                         <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" }}>
                           <Badge label={d.status} color={d.status==="New"?T.steel:d.status==="In Progress"?T.orange:T.green} />
                           {isAdmin && !d.mrpFinalized && <Badge label="MRP Pending" color={T.red} />}
+                          {(d.supplierBills||[]).some(b => !(b.billNo && b.billNo.trim())) && <Badge label="Fabric bill incomplete" color={T.orange} />}
                           {pend > 0 && <Badge label={`${pend} pending`} color={T.orange} />}
                         </div>
                       </div>
@@ -3979,6 +4159,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
         {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases — all bills & monthly totals" action={<PdfBtn targetId="rpt-fabric" title="Fabric Purchases" />}><div id="rpt-fabric"><FabricPurchases designs={designs} /></div></Section>}
+        {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
         {tab==="Search" && (
           <div>
@@ -4002,6 +4183,20 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
                 {p.prefix && <span style={{ color:T.gold, fontFamily:T.mono, marginLeft:8, fontSize:12 }}>code {p.prefix}</span>}
               </div>
             ))}
+            {isAdmin && fabricSupplierResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"12px 0 6px" }}>Fabric Suppliers</div>}
+            {isAdmin && fabricSupplierResults.map(name => {
+              const bills = designs.flatMap(d => (d.supplierBills||[]).filter(b=>b.supplier===name).map(b=>({...b,designNo:b.designNo||d.designNo})));
+              const billed = bills.reduce((a,b)=>a+(+b.amount||0),0);
+              const paid = payments.filter(p=>p.jobberId==="SUP:"+name).reduce((a,p)=>a+(+p.amount||0),0);
+              return (
+                <div key={name} onClick={()=>{ setTab("Fabric Suppliers"); }} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10, border:`1px solid ${T.border}`, cursor:"pointer" }}>
+                  <span style={{ color:T.white, fontWeight:700 }}>{name}</span>
+                  <Badge label="FABRIC SUPPLIER" color={T.steelLt} />
+                  <span style={{ color:T.steelLt, marginLeft:8, fontSize:12, fontFamily:T.mono }}>Purchases Rs.{billed.toFixed(0)} · Paid Rs.{paid.toFixed(0)} · Bal Rs.{(billed-paid).toFixed(0)}</span>
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, marginTop:4 }}>Tap → open Fabric Suppliers tab</div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
