@@ -1,6 +1,24 @@
 import { useState, useRef, useEffect, Fragment } from "react";
 
 const SUPA_URL = "https://izgfywbyaqjngziiiyls.supabase.co";
+const GTRANSLATE_KEY = "AIzaSyD5RnT37HyQYE-qCM2MvABCRzYjFJUE7Js";
+// Translate text to target language (hi/gu). Brackets () and Hinglish handled by Google's transliteration.
+async function googleTranslate(text, target) {
+  try {
+    const r = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${GTRANSLATE_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: text, target, format: "text" }),
+    });
+    const data = await r.json();
+    if (data && data.data && data.data.translations && data.data.translations[0]) {
+      return { ok:true, text: data.data.translations[0].translatedText };
+    }
+    return { ok:false, error: (data && data.error && data.error.message) || "Translation failed" };
+  } catch(e) {
+    return { ok:false, error: e?.message || "Network error" };
+  }
+}
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6Z2Z5d2J5YXFqbmd6aWlpeWxzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MTc2NDcsImV4cCI6MjA5Njk5MzY0N30.JSEBtFqJPhl7Rd-gqwvM79nLOb0z6q9wcJpXZmWyNi4";
 const HDR = { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" };
 
@@ -711,6 +729,29 @@ function AveragesBlock({ design }) {
 }
 
 // ── Job Sheet (read-only view, with audit info) ───────────────────────────────
+function JobSheetInstructions({ text }) {
+  const [hi, setHi] = useState(""); const [gu, setGu] = useState(""); const [busy, setBusy] = useState(""); const [err, setErr] = useState("");
+  const points = (text||"").split(/\n|(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+  const numbered = points.map((p,i)=>`${i+1}. ${p}`).join("\n");
+  async function tr(lang) { setErr(""); setBusy(lang); const res = await googleTranslate(numbered, lang); setBusy(""); if(!res.ok){setErr(res.error);return;} if(lang==="hi")setHi(res.text);else setGu(res.text); }
+  return (
+    <div style={{ background:T.gold+"12", border:`1px solid ${T.gold}55`, borderRadius:8, padding:14, marginBottom:16 }}>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Shirt Making Instructions</div>
+      <ol style={{ margin:0, paddingLeft:22, color:T.text, fontSize:13, lineHeight:1.9 }}>
+        {points.map((p,i) => <li key={i} style={{ marginBottom:3 }}>{p}</li>)}
+      </ol>
+      <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
+        <Btn label={busy==="hi"?"…":"हिंदी"} onClick={()=>tr("hi")} disabled={!!busy} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+        <Btn label={busy==="gu"?"…":"ગુજરાતી"} onClick={()=>tr("gu")} disabled={!!busy} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+        {(hi||gu) && <Btn label="Hide" onClick={()=>{setHi("");setGu("");}} small color={T.surface} textColor={T.steelLt} style={{ border:`1px solid ${T.border}` }} />}
+      </div>
+      {err && <div style={{ color:T.red, fontFamily:T.mono, fontSize:10, marginTop:6 }}>⚠ {err}</div>}
+      {hi && <div style={{ marginTop:10, background:T.surface, borderRadius:8, padding:12 }}><div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, marginBottom:6 }}>हिंदी</div><div style={{ whiteSpace:"pre-line", fontSize:14, color:T.white, lineHeight:1.8 }}>{hi}</div></div>}
+      {gu && <div style={{ marginTop:10, background:T.surface, borderRadius:8, padding:12 }}><div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, marginBottom:6 }}>ગુજરાતી</div><div style={{ whiteSpace:"pre-line", fontSize:14, color:T.white, lineHeight:1.8 }}>{gu}</div></div>}
+    </div>
+  );
+}
+
 function JobSheetView({ design }) {
   const sizes = sortSizes(design.activeColors && design.activeColors.length ? design.activeColors : ["S","M","L","XL","XXL"], design.customSizes);
   const hasSizes = (design.colors||[]).some(c => Object.keys(c.sizes||{}).length > 0);
@@ -728,17 +769,7 @@ function JobSheetView({ design }) {
         <div><span style={{ color:T.steelLt }}>Shrinkage: </span><span style={{ color:T.white }}>Length {design.shrinkageLen} · Width {design.shrinkageWid}</span></div>
         <div><span style={{ color:T.steelLt }}>Supplier: </span><span style={{ color:T.white }}>{design.supplier}</span></div>
       </div>
-      {(design.instructions||"").trim() && (() => {
-        const points = (design.instructions||"").split(/\n|(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
-        return (
-          <div style={{ background:T.gold+"12", border:`1px solid ${T.gold}55`, borderRadius:8, padding:14, marginBottom:16 }}>
-            <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Shirt Making Instructions</div>
-            <ol style={{ margin:0, paddingLeft:22, color:T.text, fontSize:13, lineHeight:1.9 }}>
-              {points.map((p,i) => <li key={i} style={{ marginBottom:3 }}>{p}</li>)}
-            </ol>
-          </div>
-        );
-      })()}
+      {(design.instructions||"").trim() && <JobSheetInstructions text={design.instructions} />}
       {(design.specs||[]).some(sp => sp.text || sp.thumb) && (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:10, marginBottom:14 }}>
           {(design.specs||[]).filter(sp => sp.text || sp.thumb).map(sp => (
@@ -2348,31 +2379,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
       <div {...dragHandle("instructions")}>
         {handleBar}
       <Section title="Shirt Making Instructions">
-        <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:8 }}>Type instructions. Each new line or full-stop becomes a numbered point automatically.</div>
-        <textarea
-          value={d.instructions||""}
-          onChange={e => upd("instructions")(e.target.value)}
-          placeholder={"e.g. Use single needle for collar. Attach pocket 2 inch from placket. Buttons must be YKK."}
-          rows={5}
-          style={{ width:"100%", boxSizing:"border-box", background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.sans, fontSize:14, padding:"10px 12px", lineHeight:1.6, outline:"none", resize:"vertical" }}
-        />
-        {/* numbered preview */}
-        {(d.instructions||"").trim() && (() => {
-          const points = (d.instructions||"").split(/\n|(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
-          return (
-            <div style={{ background:T.bg, borderRadius:8, padding:14, marginTop:10, border:`1px solid ${T.border}` }}>
-              <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Preview — numbered points</div>
-              <ol style={{ margin:0, paddingLeft:22, color:T.text, fontSize:14, lineHeight:1.9 }}>
-                {points.map((p,i) => <li key={i} style={{ marginBottom:4 }}>{p}</li>)}
-              </ol>
-              <div style={{ display:"flex", gap:8, marginTop:12, flexWrap:"wrap" }}>
-                <Btn label="Translate → Hindi" small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} onClick={() => window.open(`https://translate.google.com/?sl=en&tl=hi&text=${encodeURIComponent(points.map((p,i)=>`${i+1}. ${p}`).join("\n"))}&op=translate`,"_blank")} />
-                <Btn label="Translate → Gujarati" small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} onClick={() => window.open(`https://translate.google.com/?sl=en&tl=gu&text=${encodeURIComponent(points.map((p,i)=>`${i+1}. ${p}`).join("\n"))}&op=translate`,"_blank")} />
-              </div>
-              <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:6 }}>Translation opens in Google Translate — pick the language, copy the result back if you want to save it.</div>
-            </div>
-          );
-        })()}
+        <InstructionsBox value={d.instructions} onChange={upd("instructions")} />
       </Section>
       </div>
       <div {...dragHandle("fabricbill")}>
@@ -3133,6 +3140,65 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
         showToast(c.sendToId ? "Challan saved & sent ✓" : "Challan added ✓");
         setShowForm(false);
       }} />}
+    </div>
+  );
+}
+
+// Shirt-making instructions with auto-numbering + inline Hindi/Gujarati translation
+function InstructionsBox({ value, onChange, L = (x)=>x }) {
+  const [hi, setHi] = useState("");
+  const [gu, setGu] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const points = (value||"").split(/\n|(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+  const numbered = points.map((p,i)=>`${i+1}. ${p}`).join("\n");
+  async function doTranslate(lang) {
+    setErr(""); setBusy(lang);
+    const res = await googleTranslate(numbered, lang);
+    setBusy("");
+    if (!res.ok) { setErr(res.error||"Translation failed"); return; }
+    if (lang==="hi") setHi(res.text); else setGu(res.text);
+  }
+  return (
+    <div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:8 }}>Type instructions. Each new line or full-stop becomes a numbered point automatically. Text in brackets ( ) is kept as pronounced.</div>
+      <textarea
+        value={value||""}
+        onChange={e => { onChange(e.target.value); setHi(""); setGu(""); }}
+        placeholder={"e.g. Use single needle for collar. Attach pocket 2 inch from placket. Buttons must be YKK (pakka)."}
+        rows={5}
+        style={{ width:"100%", boxSizing:"border-box", background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.sans, fontSize:14, padding:"10px 12px", lineHeight:1.6, outline:"none", resize:"vertical" }}
+      />
+      {(value||"").trim() && (
+        <div style={{ background:T.bg, borderRadius:8, padding:14, marginTop:10, border:`1px solid ${T.border}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Preview — numbered points</div>
+          <ol style={{ margin:0, paddingLeft:22, color:T.text, fontSize:14, lineHeight:1.9 }}>
+            {points.map((p,i) => <li key={i} style={{ marginBottom:4 }}>{p}</li>)}
+          </ol>
+          <div style={{ display:"flex", gap:8, marginTop:12, flexWrap:"wrap" }}>
+            <Btn label={busy==="hi"?"Translating…":"Show Hindi"} onClick={()=>doTranslate("hi")} disabled={!!busy} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+            <Btn label={busy==="gu"?"Translating…":"Show Gujarati"} onClick={()=>doTranslate("gu")} disabled={!!busy} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+            {(hi||gu) && <Btn label="Hide" onClick={()=>{setHi("");setGu("");}} small color={T.surface} textColor={T.steelLt} style={{ border:`1px solid ${T.border}` }} />}
+          </div>
+          {err && <div style={{ color:T.red, fontFamily:T.mono, fontSize:10, marginTop:8 }}>⚠ {err}</div>}
+          {(hi||gu) && (
+            <div style={{ display:"grid", gridTemplateColumns:`1fr${hi?" 1fr":""}${gu?" 1fr":""}`, gap:12, marginTop:12 }}>
+              <div style={{ background:T.surface, borderRadius:8, padding:12 }}>
+                <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:6 }}>English</div>
+                <div style={{ whiteSpace:"pre-line", fontSize:13, color:T.text, lineHeight:1.8 }}>{numbered}</div>
+              </div>
+              {hi && <div style={{ background:T.surface, borderRadius:8, padding:12 }}>
+                <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:6 }}>हिंदी (Hindi)</div>
+                <div style={{ whiteSpace:"pre-line", fontSize:14, color:T.white, lineHeight:1.8 }}>{hi}</div>
+              </div>}
+              {gu && <div style={{ background:T.surface, borderRadius:8, padding:12 }}>
+                <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:6 }}>ગુજરાતી (Gujarati)</div>
+                <div style={{ whiteSpace:"pre-line", fontSize:14, color:T.white, lineHeight:1.8 }}>{gu}</div>
+              </div>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
