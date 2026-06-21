@@ -2948,7 +2948,13 @@ function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onCl
   const amount = (+form.qty||0)*(+form.rate||0);
   async function save() {
     const target = designs.find(d => String(d.designNo)===String(designNo).trim());
-    if (!target) { showToast("Pick a valid design", "error"); return; }
+    if (!target) { showToast("This design number does not exist. Create the design first.", "error"); return; }
+    // if the design already has a fabric supplier/bill, warn before adding another
+    const existingBills = (target.supplierBills||[]).filter(b => b.supplier && b.supplier.trim());
+    if (existingBills.length > 0) {
+      const names = [...new Set(existingBills.map(b => b.supplier.trim()))].join(", ");
+      if (!window.confirm(`Design ${target.designNo} already has a fabric supplier (${names}).\n\nDo you want to add another supplier/bill to this design?`)) return;
+    }
     const bill = { id:`B${Date.now()}`, billType:form.billType, supplier:form.supplier, billNo:form.billNo, billDate:form.billDate, lrNo:form.lrNo, transporter:form.transporter, qty:form.qty, rate:form.rate, amount:amount?String(amount):"", photo:"", appliesTo:[], designNo:target.designNo };
     const updated = { ...target, supplierBills:[...(target.supplierBills||[]), bill] };
     await dbUpsert("designs", dToRow(updated));
@@ -2964,6 +2970,15 @@ function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onCl
         <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Design No *</label>
         <input value={designNo} onChange={e=>setDesignNo(e.target.value)} list="rp-designs" placeholder="type or pick design no" style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }} />
         <datalist id="rp-designs">{designs.map(d => <option key={d.id} value={d.designNo} />)}</datalist>
+        {(() => {
+          const dn = String(designNo||"").trim();
+          if (!dn) return null;
+          const t = designs.find(d => String(d.designNo)===dn);
+          if (!t) return <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:4 }}>⚠ No design with this number. It must already exist.</div>;
+          const sup = [...new Set((t.supplierBills||[]).filter(b=>b.supplier&&b.supplier.trim()).map(b=>b.supplier.trim()))];
+          if (sup.length>0) return <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginTop:4 }}>⚠ Already has supplier: {sup.join(", ")}. You'll be asked to confirm adding another.</div>;
+          return <div style={{ fontFamily:T.mono, fontSize:10, color:T.green, marginTop:4 }}>✓ Design found — no supplier yet.</div>;
+        })()}
       </div>
       <div style={{ marginBottom:14 }}>
         <SupplierPicker value={form.supplier} onChange={upd("supplier")} allSuppliers={designs.flatMap(d=>(d.supplierBills||[]).map(b=>b.supplier).filter(Boolean))} />
@@ -4457,6 +4472,76 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     showToast("Backup downloaded ✓");
   }
 
+  const restoreRef = useRef();
+  async function handleRestoreFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!window.confirm("Restore from this backup? This will REPLACE all current data in the app with the backup's data.\n\nMake sure this is the backup you want.")) { e.target.value=""; return; }
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.designs && !data.bills && !data.challans) { showToast("Not a valid backup file", "error"); e.target.value=""; return; }
+      // write everything back to the database, then update screen
+      const sets = [
+        ["designs", data.designs||[], dToRow, setDesigns],
+        ["jobbers", data.people||[], jToRow, setPeople],
+        ["bookings", data.bookings||[], bToRow, setBookings],
+        ["bills", data.bills||[], billToRow, setBills],
+        ["payments", data.payments||[], payToRow, setPayments],
+        ["challans", data.challans||[], challanToRow, setChallans],
+        ["credit_notes", data.creditNotes||[], cnToRow, setCreditNotes],
+      ];
+      let count = 0;
+      for (const [table, arr, conv, setter] of sets) {
+        for (const item of arr) { try { await dbUpsert(table, conv(item)); count++; } catch(err){} }
+        setter(arr);
+      }
+      recordActivity(currentUser, "Restored from backup", file.name, `${count} records`);
+      showToast(`Restored ${count} records ✓`);
+    } catch(err) {
+      showToast("Could not read backup file", "error");
+    }
+    e.target.value="";
+  }
+
+  function exportExcel() {
+    // builds multiple CSV sections in one file, openable in Excel
+    function csvCell(v) { const s = String(v==null?"":v).replace(/"/g,'""'); return /[",\n]/.test(s)?`"${s}"`:s; }
+    function csvRows(rows) { return rows.map(r => r.map(csvCell).join(",")).join("\n"); }
+    let out = "";
+    // Designs
+    out += "DESIGNS\n";
+    out += csvRows([["Design No","Brand","Style","Fabric","Supplier","Lot No","Status","Code Words"], ...designs.map(d => [d.designNo,d.brand,d.style,d.fabric,d.supplier,d.lotNo,d.status,d.keywords])]) + "\n\n";
+    // Fabric bills
+    out += "FABRIC PURCHASES\n";
+    const fb = [];
+    designs.forEach(d => (d.supplierBills||[]).forEach(b => fb.push([b.billDate,b.billNo,b.supplier,b.designNo||d.designNo,b.qty,b.rate,b.amount,b.lrNo,b.transporter])));
+    out += csvRows([["Bill Date","Bill No","Supplier","Design","Qty","Rate","Amount","LR No","Transporter"], ...fb]) + "\n\n";
+    // Challans
+    out += "CHALLANS\n";
+    const ch = [];
+    challans.forEach(c => (c.lines&&c.lines.length?c.lines:[{designNo:c.designNo,process:c.process,qty:c.qty,rate:c.rate,amount:c.amount}]).forEach(l => ch.push([c.date,c.challanNo,(people.find(j=>j.id===c.jobberId)||{}).name||c.jobberId,l.designNo,l.process,l.qty,l.rate,l.amount,c.status])));
+    out += csvRows([["Date","Challan No","Jobber","Design","Process","Qty","Rate","Amount","Status"], ...ch]) + "\n\n";
+    // Bills
+    out += "JOBBER BILLS\n";
+    out += csvRows([["Date","Bill No","Jobber","Designs","Total","GST"], ...bills.map(b => [b.billDate,b.billNo,(people.find(j=>j.id===b.jobberId)||{}).name||b.jobberId,(b.lines||[]).map(l=>l.designNo).join(" "),b.total,b.hasGst?"Yes":"No"])]) + "\n\n";
+    // Payments
+    out += "PAYMENTS\n";
+    out += csvRows([["Date","Party","Amount","Mode","Note"], ...payments.map(p => [p.date,(p.jobberId||"").startsWith("SUP:")?p.jobberId.slice(4):((people.find(j=>j.id===p.jobberId)||{}).name||p.jobberId),p.amount,p.mode||p.channel,p.note])]) + "\n\n";
+    // Credit notes
+    out += "CREDIT NOTES\n";
+    out += csvRows([["Date","CN No","Party Type","Party","Reason","Designs","Bills","Total"], ...creditNotes.map(c => [c.cnDate,c.cnNo,c.partyType,c.partyType==="supplier"?c.party:((people.find(j=>j.id===c.party)||{}).name||c.party),c.reason,cnDesignNos(c).join(" "),cnBillNos(c).join(" "),c.total])]) + "\n\n";
+
+    const blob = new Blob(["\ufeff"+out], { type:"text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0,10);
+    a.href = url; a.download = `aashish-erp-data-${stamp}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Excel/CSV downloaded ✓");
+  }
+
   async function sendLot(mv) {
     if (!sel) return;
     const updated = { ...sel, movements:[...(sel.movements||[]), mv] };
@@ -4573,6 +4658,9 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
           <NotificationBell notifications={notifications} currentUser={currentUser} onOpenDesign={openDesignById} onMarkRead={markNotifRead} />
           {isAdmin && <Btn label="⭳ Backup" onClick={exportBackup} color={T.accent} textColor="#fff" small />}
+          {isAdmin && <Btn label="⭱ Restore" onClick={()=>restoreRef.current.click()} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}55` }} />}
+          {isAdmin && <Btn label="📊 Excel" onClick={exportExcel} color={T.surface} textColor={T.green} small style={{ border:`1px solid ${T.green}55` }} />}
+          {isAdmin && <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display:"none" }} onChange={handleRestoreFile} />}
           <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
       </div>
