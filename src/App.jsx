@@ -2190,7 +2190,7 @@ function FabricBillPhoto({ bill, onPick }) {
 }
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
-function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [] }) {
+function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [], creditNotes = [] }) {
   const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", customSizes:[], photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
   const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","instructions","fabricbill","photos","process","note"];
@@ -2472,6 +2472,37 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.green, marginTop:6 }}>✓ Colour meters match the fabric bill total.</div>
                 : <div style={{ fontFamily:T.mono, fontSize:12, color:T.red, marginTop:6, fontWeight:700 }}>⚠ Does NOT match — colour meters {diff>0?`are SHORT by ${Math.abs(diff)} m`:`EXCEED by ${Math.abs(diff)} m`}. Edit each colour's meters above so the total equals the fabric bill ({fabricBillQty} m).</div>
               }
+            </div>
+          );
+        })()}
+        {/* View-only: credit notes linked to this design (created from ledgers, shown here by design number) */}
+        {(() => {
+          const dn = String(d.designNo||"").trim();
+          if (!dn) return null;
+          const linked = (creditNotes||[]).filter(c => cnDesignNos(c).includes(dn));
+          if (linked.length===0) return null;
+          return (
+            <div style={{ marginTop:14, background:T.red+"10", border:`1px solid ${T.red}44`, borderRadius:8, padding:12 }}>
+              <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Credit Notes linked to this design (view only)</div>
+              <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginBottom:8 }}>Created from the Jobber / Fabric Supplier ledgers. Shown here automatically via the design number.</div>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead><tr style={{ background:T.surface }}>{["Date","CN No","Against","Reason","Amount (this design)"].map(h => <th key={h} style={{ padding:"6px 8px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {linked.map((c,i) => {
+                    const amtThis = (c.lines||[]).filter(l=>String(l.designNo)===dn).reduce((a,l)=>a+(+l.amount||0),0);
+                    const against = c.partyType==="supplier" ? `Supplier: ${c.party}` : `Jobber: ${(jobbers.find(j=>j.id===c.party)||{}).name||c.party}`;
+                    return (
+                      <tr key={c.id||i} style={{ background:i%2===0?T.card:T.surface }}>
+                        <td style={{ padding:"6px 8px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.cnDate}</td>
+                        <td style={{ padding:"6px 8px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{c.cnNo}</td>
+                        <td style={{ padding:"6px 8px", color:T.text, border:`1px solid ${T.border}` }}>{against}</td>
+                        <td style={{ padding:"6px 8px", color:T.text, border:`1px solid ${T.border}` }}>{c.reason}</td>
+                        <td style={{ padding:"6px 8px", color:T.red, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>Rs.{amtThis}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           );
         })()}
@@ -3646,7 +3677,7 @@ function CreditNoteForm({ partyType, partyLabel, designs, onClose, onSave, curre
   const [cnDate, setCnDate] = useState(new Date().toISOString().slice(0,10));
   const [reason, setReason] = useState("");
   const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]);
-  const REASONS = ["Damage claim","Rate difference","Short supply","Quality issue","Other"];
+  const REASONS = ["Damage claim","Rate difference","Short supply","Quality issue","Goods returned","Other"];
   function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]); }
   function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
   function updLine(id,k,v) { setLines(l => l.map(x => { if(x.id!==id) return x; const nx={...x,[k]:v}; const q=+nx.qty||0,r=+nx.rate||0; if(k==="qty"||k==="rate") nx.amount=(q*r)?String(q*r):nx.amount; return nx; })); }
@@ -4238,7 +4269,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           <Btn label="Cancel" onClick={() => { setCreating(false); setEditing(false); }} color={T.surface} textColor={T.steelLt} small />
         </div>
         <div style={{ maxWidth:1000, margin:"0 auto", padding:24 }}>
-          <DesignForm onSave={saveDesign} onCancel={() => { setCreating(false); setEditing(false); }} existing={editing?sel:null} jobbers={jobbers} onAddJobber={addJobberInline} designs={designs} />
+          <DesignForm onSave={saveDesign} onCancel={() => { setCreating(false); setEditing(false); }} existing={editing?sel:null} jobbers={jobbers} onAddJobber={addJobberInline} designs={designs} creditNotes={creditNotes} />
         </div>
         <Toast {...toast} />
       </div>
