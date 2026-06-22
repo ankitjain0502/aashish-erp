@@ -312,10 +312,10 @@ function jobberDoesProcess(jobber, processName) {
   return jobber.process===processName;
 }
 function mvToRow(mv, did) {
-  return { id: mv.id, design_id: did, date: mv.date||"", jobber: mv.jobber||"", received_from: mv.receivedFrom||"", sent_to: mv.sentTo||"", sent_to_id: mv.sentToId||"", qty: mv.qty||0, remark: mv.remark||"", status: mv.status||"pending" };
+  return { id: mv.id, design_id: did, date: mv.date||"", received_date: mv.receivedDate||"", sent_date: mv.sentDate||"", jobber: mv.jobber||"", received_from: mv.receivedFrom||"", sent_to: mv.sentTo||"", sent_to_id: mv.sentToId||"", qty: mv.qty||0, remark: mv.remark||"", status: mv.status||"pending" };
 }
 function rowToMv(r) {
-  return { id: r.id, date: r.date||"", jobber: r.jobber||"", receivedFrom: r.received_from||"", sentTo: r.sent_to||"", sentToId: r.sent_to_id||"", qty: r.qty||0, remark: r.remark||"", status: r.status||"pending" };
+  return { id: r.id, date: r.date||"", receivedDate: r.received_date||"", sentDate: r.sent_date||"", jobber: r.jobber||"", receivedFrom: r.received_from||"", sentTo: r.sent_to||"", sentToId: r.sent_to_id||"", qty: r.qty||0, remark: r.remark||"", status: r.status||"pending" };
 }
 function entToRow(e, did) {
   return { id: e.id||`E${Date.now()}`, design_id: did, jobber_id: e.jobber||"", date: e.date||"", qty_received: e.qtyReceived||"", qty_delivered: e.qtyDelivered||"", damage: e.damage||"", time_taken: e.timeTaken||"", notes: e.notes||"", status: e.status||"pending" };
@@ -1819,10 +1819,10 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
 }
 function rowToChallan(r) {
-  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
   // back-compat: if no lines array but has single design, synthesize one line
   if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
   return c;
@@ -2076,7 +2076,7 @@ function ProductionFlow({ design, jobbers }) {
     });
   });
   (design.movements||[]).forEach(m => {
-    rows.push({ kind:"move", date:m.date||"", process:"Movement", jobber:m.jobber||"", from:m.receivedFrom||"", to:m.sentTo||"", qty:m.qty||"", recd:"", dlvd:"", days:null, remark:m.remark||"" });
+    rows.push({ kind:"move", date:m.date||m.sentDate||m.receivedDate||"", process:"Movement", jobber:m.jobber||"", from:m.receivedFrom||"", to:m.sentTo||"", qty:m.qty||"", recd:m.receivedDate||"", dlvd:m.sentDate||"", days:daysBetween(m.receivedDate,m.sentDate), remark:m.remark||"" });
   });
   rows.sort((a,b) => { if(!a.date) return 1; if(!b.date) return -1; return a.date.localeCompare(b.date); });
 
@@ -3532,28 +3532,27 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
         }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
-        // send-to-next: create a movement for each design in the challan
-        if (c.sendToId) {
-          const targetName = c.sendToId==="__office__" ? "Office / Admin" : ((jobbers.find(j=>j.id===c.sendToId)||{}).name||"");
-          for (const dn of challanDesigns(c)) {
-            const design = designs.find(d => String(d.designNo)===String(dn));
-            if (design) {
-              const lineQty = (c.lines||[]).filter(l=>String(l.designNo)===String(dn)).reduce((a,l)=>a+(+l.qty||0),0) || +c.qty;
-              const mv = { id:`MV${Date.now()}_${dn}`, date:c.date||new Date().toISOString().slice(0,10), jobber:jname(c.jobberId), receivedFrom:jname(c.jobberId), sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:lineQty, remark:`Challan ${c.challanNo||""}`, status:"sent" };
-              const updated = { ...design, movements:[...(design.movements||[]), mv] };
-              setDesigns(p => p.map(x => x.id===updated.id?updated:x));
-              await dbUpsert("movements", mvToRow(mv, design.id));
-              // notify the receiving jobber specifically, with process + design
-              if (c.sendToId && c.sendToId!=="__office__") {
-                const proc = (c.lines||[]).filter(l=>String(l.designNo)===String(dn)).map(l=>l.process).filter(Boolean).join(", ");
-                recordNotification(jname(c.jobberId), `${jname(c.jobberId)} sent you Design ${dn}${proc?` for ${proc}`:""} — ${lineQty} pcs`, design.id, c.sendToId);
-              }
+        // create a movement for EACH design line that has its own "Sent To"
+        {
+          for (const ln of (c.lines||[])) {
+            const dn = String(ln.designNo);
+            const lineSendTo = ln.sentToId || c.sendToId; // per-line, fallback to challan-level
+            if (!lineSendTo) continue;
+            const targetName = lineSendTo==="__office__" ? "Office / Admin" : ((jobbers.find(j=>j.id===lineSendTo)||{}).name||"");
+            const design = designs.find(d => String(d.designNo)===dn);
+            if (!design) continue;
+            const lineQty = +ln.qty||0;
+            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:jname(c.jobberId), receivedFrom:ln.receivedFrom||jname(c.jobberId), sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}`, status:"sent" };
+            const updated = { ...design, movements:[...(design.movements||[]), mv] };
+            setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+            await dbUpsert("movements", mvToRow(mv, design.id));
+            if (lineSendTo && lineSendTo!=="__office__") {
+              recordNotification(jname(c.jobberId), `${jname(c.jobberId)} sent you Design ${dn}${ln.process?` for ${ln.process}`:""} — ${lineQty} pcs`, design.id, lineSendTo);
             }
           }
-          recordNotification(currentUser, `Challan ${c.challanNo||""} sent to ${targetName}`, "");
         }
         recordActivity(currentUser, "Added challan", `Designs ${challanDesigns(c).join(", ")}`, `${jname(c.jobberId)} · ${challanQty(c)} pcs`);
-        showToast(c.sendToId ? "Challan saved & sent ✓" : "Challan added ✓");
+        showToast("Challan saved ✓");
         setShowForm(false);
       }} />}
     </div>
@@ -3647,15 +3646,29 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       return disp < rec;                                    // still has undispatched qty → keep showing
     });
   })();
-  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"", gstPct:"" });
-  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false }]);
+  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), receivedDate:"", sentDate:"", receivedFrom:"", challanNo:"", photo:"", sendToId:"", gstPct:"" });
+  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]);
+  // auto-fill each line's "Received From" based on who last sent that design to this jobber
+  useEffect(() => {
+    const me = fixedJobber || head.jobberId;
+    if (!me) return;
+    setLines(prev => prev.map(ln => {
+      const dn = String(ln.designNo||"").trim();
+      if (!dn || ln.receivedFrom) return ln;
+      let fromName = "";
+      (challans||[]).forEach(c => {
+        if (c.sendToId===me && challanDesigns(c).includes(dn)) fromName = (jobbers.find(j=>j.id===c.jobberId)||{}).name || fromName;
+      });
+      return fromName ? { ...ln, receivedFrom:fromName } : ln;
+    }));
+  }, [lines.map(l=>l.designNo).join(","), head.jobberId]);
   const updHead = k => v => setHead(f => ({ ...f, [k]:v }));
   const actingJobber = jobbers.find(j => j.id === (fixedJobber || head.jobberId));
   const mayCreateDesign = isAdmin || (actingJobber && actingJobber.canCreateDesign);
   const photoRef = useRef();
   function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => updHead("photo")(src)).catch(()=>{}); }
 
-  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false }]); }
+  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]); }
   function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
   function updLine(id, k, v) { setLines(l => l.map(x => x.id===id ? { ...x, [k]:v } : x)); }
 
@@ -3676,7 +3689,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
 
   function save() {
     if (!canSave) return;
-    const builtLines = validLines.map(ln => ({ designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:+ln.rate||0, amount:(+ln.qty||0)*(+ln.rate||0), isSplit:!!ln.isSplit, remark:ln.remark||"" }));
+    const builtLines = validLines.map(ln => ({ designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:+ln.rate||0, amount:(+ln.qty||0)*(+ln.rate||0), isSplit:!!ln.isSplit, remark:ln.remark||"", receivedFrom:ln.receivedFrom||"", sentToId:ln.sentToId||"", receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||"" }));
     const newDesignNos = validLines.filter(ln => lineInfo(ln).isNewDesign).map(ln => String(ln.designNo).trim());
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
@@ -3709,7 +3722,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       </div>
 
       {/* Design lines */}
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Design for this challan</div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Designs in this challan — each can have its own sender/receiver</div>
       {lines.map((ln,idx) => {
         const info = lineInfo(ln);
         const dupName = info.dup ? ((jobbers.find(j=>j.id===info.dup.jobberId)||{}).name||"another jobber") : "";
@@ -3752,6 +3765,20 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 <div style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:700, padding:"7px 0" }}>Rs.{info.amount}</div>
               </div>
               {lines.length>1 && <Btn label="✕" onClick={() => removeLine(ln.id)} color={T.red+"22"} textColor={T.red} small />}
+            </div>
+            {/* Per-design received/sent tracking */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginTop:8 }}>
+              <Inp label="Received From" value={ln.receivedFrom||""} onChange={v => updLine(ln.id,"receivedFrom",v)} placeholder="who sent it" />
+              <Inp label="Received Date" type="date" value={ln.receivedDate||""} onChange={v => updLine(ln.id,"receivedDate",v)} />
+              <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Sent To</label>
+                <select value={ln.sentToId||""} onChange={e => updLine(ln.id,"sentToId",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }}>
+                  <option value="">— keep —</option>
+                  <option value="__office__">Office / Admin</option>
+                  {jobbers.filter(j=>j.role==="jobber"&&j.id!==(fixedJobber||head.jobberId)).map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+                </select>
+              </div>
+              <Inp label="Sent Date" type="date" value={ln.sentDate||""} onChange={v => updLine(ln.id,"sentDate",v)} />
             </div>
             {/* Remark */}
             <div style={{ marginTop:8 }}>
@@ -3805,9 +3832,9 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
         <input ref={photoRef} type="file" accept="image/*" style={{ display:"none" }} onChange={handlePhoto} />
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:14 }}>
-        <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Send To Next (after this work)</label>
+        <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Send ALL designs to (optional — only if same for all)</label>
         <select value={head.sendToId} onChange={e => updHead("sendToId")(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}>
-          <option value="">— no one / finished —</option>
+          <option value="">— use per-design "Sent To" above —</option>
           <option value="__office__">🏢 Office / Admin</option>
           {jobbers.filter(j=>j.role==="jobber" && j.id!==head.jobberId).map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
         </select>
@@ -4521,23 +4548,26 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         }
         await dbUpsert("challans", challanToRow(c));
         setChallans(p => [c,...p]);
-        if (c.sendToId) {
-          const target = c.sendToId==="__office__" ? null : people.find(j=>j.id===c.sendToId);
-          const targetName = c.sendToId==="__office__" ? "Office / Admin" : (target?.name||"");
-          for (const dn of challanDesigns(c)) {
-            const design = designs.find(d => String(d.designNo)===String(dn));
-            if (design) {
-              const lineQty = (c.lines||[]).filter(l=>String(l.designNo)===String(dn)).reduce((a,l)=>a+(+l.qty||0),0) || +c.qty;
-              const mv = { id:`MV${Date.now()}_${dn}`, date:c.date||new Date().toISOString().slice(0,10), jobber:user.name, receivedFrom:user.name, sentTo:targetName, sentToId:c.sendToId==="__office__"?"":c.sendToId, qty:lineQty, remark:`Challan ${c.challanNo||""}`, status:"sent" };
-              const updated = { ...design, movements:[...(design.movements||[]), mv] };
-              setDesigns(p => p.map(x => x.id===updated.id?updated:x));
-              await dbUpsert("movements", mvToRow(mv, design.id));
+        {
+          for (const ln of (c.lines||[])) {
+            const dn = String(ln.designNo);
+            const lineSendTo = ln.sentToId || c.sendToId;
+            if (!lineSendTo) continue;
+            const targetName = lineSendTo==="__office__" ? "Office / Admin" : ((people.find(j=>j.id===lineSendTo)||{}).name||"");
+            const design = designs.find(d => String(d.designNo)===dn);
+            if (!design) continue;
+            const lineQty = +ln.qty||0;
+            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:user.name, receivedFrom:ln.receivedFrom||user.name, sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}`, status:"sent" };
+            const updated = { ...design, movements:[...(design.movements||[]), mv] };
+            setDesigns(p => p.map(x => x.id===updated.id?updated:x));
+            await dbUpsert("movements", mvToRow(mv, design.id));
+            if (lineSendTo && lineSendTo!=="__office__") {
+              recordNotification(user.name, `${user.name} sent you Design ${dn}${ln.process?` for ${ln.process}`:""} — ${lineQty} pcs`, design.id, lineSendTo);
             }
           }
-          recordNotification(user.name, `${user.name} sent Challan ${c.challanNo||""} to ${targetName}`, "");
         }
         recordNotification(user.name, `New challan by ${user.name} — designs ${challanDesigns(c).join(", ")} (${challanQty(c)} pcs)`, "");
-        showToast(c.sendToId ? "Saved & sent to next ✓" : "Challan saved ✓");
+        showToast("Challan saved ✓");
         setShowChallan(false);
       }} />}
       <Toast {...toast} />
