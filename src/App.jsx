@@ -2680,7 +2680,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
   const [search, setSearch] = useState("");
   const [showPay, setShowPay] = useState(false);
   const [showCN, setShowCN] = useState(false);
-  const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
+  const [yearFilter, setYearFilter] = useState("all");
 
   // gather all fabric bills across designs, grouped by supplier name
   const allBills = [];
@@ -2723,9 +2723,9 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
   const myCNs = (creditNotes||[]).filter(c => c.partyType==="supplier" && c.party===sel);
   const years = [...new Set([...bills.map(b=>yearOf(b.billDate)), ...myPays.map(p=>yearOf(p.date)), new Date().getFullYear()].filter(Boolean))].sort((a,b)=>b-a);
   const rows = [
-    ...bills.filter(b=>yearOf(b.billDate)===yearFilter).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:billTotalWithGST(b), credit:0 })),
-    ...myPays.filter(p=>yearOf(p.date)===yearFilter).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
-    ...myCNs.filter(c=>yearOf(c.cnDate)===yearFilter).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
+    ...bills.filter(b=>yearFilter==="all"||yearOf(b.billDate)===yearFilter||yearOf(b.billDate)===null).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:billTotalWithGST(b), credit:0 })),
+    ...myPays.filter(p=>yearFilter==="all"||yearOf(p.date)===yearFilter||yearOf(p.date)===null).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+    ...myCNs.filter(c=>yearFilter==="all"||yearOf(c.cnDate)===yearFilter||yearOf(c.cnDate)===null).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   let run=0; const withBal = rows.map(r=>{ run+=r.debit-r.credit; return {...r,balance:run}; });
   const totDebit = rows.reduce((a,r)=>a+r.debit,0), totCredit = rows.reduce((a,r)=>a+r.credit,0);
@@ -2744,7 +2744,8 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
       <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16, flexWrap:"wrap" }}>
         <Btn label="← Back to suppliers" onClick={()=>setSel("")} color={T.surface} textColor={T.steelLt} small />
         <span style={{ color:T.white, fontWeight:700, fontSize:18 }}>{sel}</span>
-        <select value={yearFilter} onChange={e=>setYearFilter(+e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:12 }}>
+        <select value={yearFilter} onChange={e=>setYearFilter(e.target.value==="all"?"all":+e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:12 }}>
+          <option value="all">All years</option>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <Btn label="+ Record Payment" onClick={()=>setShowPay(true)} color={T.green} textColor="#fff" small />
@@ -2766,7 +2767,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
         <thead><tr style={{ background:T.surface }}>{["Date","Particulars","Bill No","Debit","Credit","Balance"].map(h=><th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
         <tbody>
-          {withBal.length===0 && <tr><td colSpan={6} style={{ padding:16, textAlign:"center", color:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}` }}>No entries for {yearFilter}.</td></tr>}
+          {withBal.length===0 && <tr><td colSpan={6} style={{ padding:16, textAlign:"center", color:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}` }}>No entries{yearFilter==="all"?"":` for ${yearFilter}`}.</td></tr>}
           {withBal.map((r,i)=>(
             <tr key={i} style={{ background:i%2===0?T.card:T.surface }}>
               <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.date}</td>
