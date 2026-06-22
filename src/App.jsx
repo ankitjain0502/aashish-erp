@@ -1483,7 +1483,9 @@ function DesignCostSheet({ design, jobbers, challans = [] }) {
   const jn = id => (jobbers.find(j=>j.id===id)||{}).name || id || "—";
   let grand = 0;
   const fabricTotal = (design.supplierBills||[]).reduce((a,b) => a+(+b.amount||0), 0);
+  const transportTotal = (design.supplierBills||[]).reduce((a,b) => a+(+b.transportCost||0), 0);
   grand += fabricTotal;
+  grand += transportTotal;
   return (
     <div>
       <div style={{ display:"flex", gap:14, marginBottom:16, flexWrap:"wrap" }}>
@@ -1541,6 +1543,14 @@ function DesignCostSheet({ design, jobbers, challans = [] }) {
             <td style={{ padding:"10px", color:T.white, fontFamily:T.mono }}>Rs.{fabricTotal.toFixed(2)}</td>
             <td colSpan={2} style={{ padding:"10px", color:T.steelLt, fontFamily:T.mono }}>Fabric/pc: Rs.{totalPcs>0?Math.ceil(fabricTotal/totalPcs):0}</td>
           </tr>
+          {transportTotal>0 && (
+            <tr style={{ borderBottom:`1px solid ${T.border}` }}>
+              <td style={{ padding:"10px", color:T.text, fontWeight:600 }}>Transport / Freight</td>
+              <td colSpan={5} style={{ padding:"10px", color:T.steelLt }}>{(design.supplierBills||[]).filter(b=>+b.transportCost>0).map(b=>b.transporter||"transport").join(", ")||"—"}</td>
+              <td style={{ padding:"10px", color:T.white, fontFamily:T.mono }}>Rs.{transportTotal.toFixed(2)}</td>
+              <td colSpan={2} style={{ padding:"10px", color:T.steelLt, fontFamily:T.mono }}>Transport/pc: Rs.{totalPcs>0?Math.ceil(transportTotal/totalPcs):0}</td>
+            </tr>
+          )}
           {PROCESSES.filter(p => p!=="Fabric").map(p => {
             const proc = (design.processes||{})[p];
             if (!proc || !proc.rate) return null;
@@ -1740,10 +1750,10 @@ function rowToCn(r) {
 function cnDesignNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
 function cnBillNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.billNo||"")).filter(Boolean))]; }
 function payToRow(p) {
-  return { id:p.id, jobber_id:p.jobberId||"", date:p.date||"", amount:p.amount||0, mode:p.mode||"", channel:p.channel||"bank", note:p.note||"", created_by:p.createdBy||"", created_at_str:p.createdAtStr||"" };
+  return { id:p.id, jobber_id:p.jobberId||"", date:p.date||"", amount:p.amount||0, mode:p.mode||"", channel:p.channel||"bank", note:p.note||"", created_by:p.createdBy||"", created_at_str:p.createdAtStr||"", confirmed:!!p.confirmed, confirm_text:p.confirmText||"", confirm_date:p.confirmDate||"" };
 }
 function rowToPay(r) {
-  return { id:r.id, jobberId:r.jobber_id||"", date:r.date||"", amount:r.amount||0, mode:r.mode||"", channel:r.channel||"bank", note:r.note||"", createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  return { id:r.id, jobberId:r.jobber_id||"", date:r.date||"", amount:r.amount||0, mode:r.mode||"", channel:r.channel||"bank", note:r.note||"", createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", confirmed:!!r.confirmed, confirmText:r.confirm_text||"", confirmDate:r.confirm_date||"" };
 }
 
 function logToRow(l) {
@@ -2501,7 +2511,26 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                 <Inp label="Bill No" value={b.billNo} onChange={v => updFabricBill(b.id,"billNo",v)} />
                 <Inp label="LR No" value={b.lrNo} onChange={v => updFabricBill(b.id,"lrNo",v)} />
                 <Inp label="Transporter" value={b.transporter||""} onChange={v => updFabricBill(b.id,"transporter",v)} placeholder="transporter name" />
+                <Inp label="Transport Cost (Rs.)" type="number" value={b.transportCost||""} onChange={v => updFabricBill(b.id,"transportCost",v)} placeholder="freight cost" />
+                <Inp label="GST %" value={b.gstRate||""} onChange={v => updFabricBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
+                <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updFabricBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
               </div>
+              {/* GST breakdown — amount entered is taxable (before GST); GST added on top */}
+              {(+b.gstRate>0 && +b.amount>0) && (() => {
+                const taxable = +b.amount||0, rate = +b.gstRate||0;
+                const gst = taxable*rate/100;
+                const total = taxable + gst;
+                return (
+                  <div style={{ background:T.bg, borderRadius:6, padding:"8px 12px", marginBottom:8, fontFamily:T.mono, fontSize:10, color:T.steelLt, display:"flex", gap:16, flexWrap:"wrap" }}>
+                    <span>Taxable: <b style={{color:T.text}}>Rs.{taxable.toFixed(2)}</b></span>
+                    {b.gstType==="IGST"
+                      ? <span>IGST {rate}%: <b style={{color:T.gold}}>Rs.{gst.toFixed(2)}</b></span>
+                      : <><span>CGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span><span>SGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span></>}
+                    <span>Total (incl GST): <b style={{color:T.white}}>Rs.{total.toFixed(2)}</b></span>
+                  </div>
+                );
+              })()}
+              <div style={{ display:"none" }}>
               {/* This bill also covers other designs (split meters) */}
               <div style={{ background:T.bg, borderRadius:6, padding:10, marginTop:8, marginBottom:8 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
@@ -2526,6 +2555,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                   </div>
                 ))}
                 <datalist id={`designs-${b.id}`}>{designs && designs.map(dd => <option key={dd.id} value={dd.designNo} />)}</datalist>
+              </div>
               </div>
               <Btn label="✕ Remove this bill" onClick={() => removeFabricBill(b.id)} color={T.red+"22"} textColor={T.red} small />
             </div>
@@ -2955,7 +2985,7 @@ function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onCl
       const names = [...new Set(existingBills.map(b => b.supplier.trim()))].join(", ");
       if (!window.confirm(`Design ${target.designNo} already has a fabric supplier (${names}).\n\nDo you want to add another supplier/bill to this design?`)) return;
     }
-    const bill = { id:`B${Date.now()}`, billType:form.billType, supplier:form.supplier, billNo:form.billNo, billDate:form.billDate, lrNo:form.lrNo, transporter:form.transporter, qty:form.qty, rate:form.rate, amount:amount?String(amount):"", photo:"", appliesTo:[], designNo:target.designNo };
+    const bill = { id:`B${Date.now()}`, billType:form.billType, supplier:form.supplier, billNo:form.billNo, billDate:form.billDate, lrNo:form.lrNo, transporter:form.transporter, transportCost:form.transportCost||"", gstRate:form.gstRate||"", gstType:form.gstType||"CGST+SGST", qty:form.qty, rate:form.rate, amount:amount?String(amount):"", photo:"", appliesTo:[], designNo:target.designNo };
     const updated = { ...target, supplierBills:[...(target.supplierBills||[]), bill] };
     await dbUpsert("designs", dToRow(updated));
     setDesigns(p => p.map(x => x.id===target.id?updated:x));
@@ -2991,7 +3021,23 @@ function RecordPurchaseModal({ designs, setDesigns, showToast, currentUser, onCl
         <Inp label="Rate" type="number" value={form.rate} onChange={upd("rate")} />
         <Inp label="LR No" value={form.lrNo} onChange={upd("lrNo")} />
         <Inp label="Transporter" value={form.transporter} onChange={upd("transporter")} />
+        <Inp label="Transport Cost (Rs.)" type="number" value={form.transportCost||""} onChange={upd("transportCost")} placeholder="freight" />
+        <Inp label="GST %" value={form.gstRate||""} onChange={upd("gstRate")} options={["","5","12","18","28"]} />
+        <Inp label="GST Type" value={form.gstType||"CGST+SGST"} onChange={upd("gstType")} options={["CGST+SGST","IGST"]} />
       </div>
+      {(+form.gstRate>0 && amount>0) && (() => {
+        const taxable = amount, rate = +form.gstRate||0;
+        const gst = taxable*rate/100, total = taxable+gst;
+        return (
+          <div style={{ background:T.bg, borderRadius:6, padding:"8px 12px", marginBottom:12, fontFamily:T.mono, fontSize:10, color:T.steelLt, display:"flex", gap:16, flexWrap:"wrap" }}>
+            <span>Taxable: <b style={{color:T.text}}>Rs.{taxable.toFixed(2)}</b></span>
+            {form.gstType==="IGST"
+              ? <span>IGST {rate}%: <b style={{color:T.gold}}>Rs.{gst.toFixed(2)}</b></span>
+              : <><span>CGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span><span>SGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span></>}
+            <span>Total: <b style={{color:T.white}}>Rs.{total.toFixed(2)}</b></span>
+          </div>
+        );
+      })()}
       <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
         <div style={{ background:T.bg, borderRadius:8, padding:"8px 16px", border:`1px solid ${T.gold}44` }}>
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>AMOUNT: </span>
@@ -3707,7 +3753,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const myCNs = (creditNotes||[]).filter(c => c.partyType==="jobber" && c.party===selJ && yearOf(c.cnDate)===yearFilter);
   const acctRows = [
     ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}`, ref:c.challanNo||"", debit:challanTotal(c), credit:0 })),
-    ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+    ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})${p.confirmed?` ✓ OK by jobber ${p.confirmDate||""}`:" — awaiting jobber OK"}`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
     ...myCNs.map(c => ({ date:c.cnDate||"", kind:"credit", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
   let runBal = 0;
@@ -4172,7 +4218,7 @@ function JobberLedger({ designs, jobbers }) {
 }
 
 // ── Jobber Panel ──────────────────────────────────────────────────────────────
-function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, onLogout }) {
+function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, onLogout }) {
   const [sel, setSel] = useState(null);
   const [showChallan, setShowChallan] = useState(false);
   const [lang, setLang] = useState("en");
@@ -4242,6 +4288,38 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase" }}>Your Assigned Designs — tap to fill sizes</span>
           <Btn label="+ New Challan" onClick={() => setShowChallan(true)} />
         </div>
+        {/* Payments awaiting this jobber's confirmation */}
+        {(() => {
+          const myPending = (payments||[]).filter(p => p.jobberId===user.id && !p.confirmed);
+          if (myPending.length===0) return null;
+          async function confirmPayment(pay) {
+            if (!window.confirm(`Confirm you received Rs.${pay.amount} on ${pay.date}?\n\nOnce confirmed you CANNOT change it. Only admin can change later.`)) return;
+            if (!window.confirm(`Please confirm again: you received Rs.${pay.amount}. Mark as OK?`)) return;
+            const updated = { ...pay, confirmed:true, confirmText:"OK", confirmDate:new Date().toISOString().slice(0,10) };
+            await dbUpsert("payments", payToRow(updated));
+            setPayments(p => p.map(x => x.id===pay.id?updated:x));
+            recordActivity(user.name, "Confirmed payment received", `Jobber ${user.name}`, `Rs.${pay.amount} on ${updated.confirmDate}`);
+            showToast("Payment confirmed ✓");
+          }
+          return (
+            <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.orange}`, padding:14, marginBottom:16 }}>
+              <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, textTransform:"uppercase", marginBottom:10, fontWeight:700 }}>⚠ Payments to Confirm — tick when you receive your money</div>
+              {myPending.map(pay => (
+                <div key={pay.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom:`1px solid ${T.border}`, flexWrap:"wrap" }}>
+                  <div style={{ flex:"1 1 160px" }}>
+                    <div style={{ fontFamily:T.mono, fontSize:15, fontWeight:900, color:T.green }}>Rs.{pay.amount}</div>
+                    <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>Paid on {pay.date||"—"} · {pay.channel||"bank"}{pay.note?` · ${pay.note}`:""}</div>
+                  </div>
+                  <button onClick={()=>confirmPayment(pay)} style={{ display:"flex", alignItems:"center", gap:8, background:T.green, color:"#fff", border:"none", borderRadius:8, padding:"10px 16px", cursor:"pointer", fontFamily:T.mono, fontSize:13, fontWeight:700 }}>
+                    <span style={{ width:18, height:18, border:"2px solid #fff", borderRadius:4, display:"inline-block" }}></span>
+                    Tick &amp; write OK
+                  </button>
+                </div>
+              ))}
+              <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:8 }}>After you confirm, it moves to your ledger. You cannot change it — only admin can.</div>
+            </div>
+          );
+        })()}
         {(challans||[]).filter(c => c.jobberId===user.id).length > 0 && (
           <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, padding:14, marginBottom:16 }}>
             <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Your Challans</div>
@@ -4504,6 +4582,146 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     e.target.value="";
   }
 
+  // estimate storage used (approx, based on data size; photos dominate)
+  const storageBytes = (() => {
+    try {
+      const all = JSON.stringify({ designs, people, bookings, bills, payments, challans, creditNotes });
+      // string length ~ bytes for base64 image data; good enough estimate
+      return all.length;
+    } catch { return 0; }
+  })();
+  const storageMB = storageBytes / (1024*1024);
+  const storagePct = Math.min(100, (storageMB / 500) * 100); // 500 MB free tier
+
+  // ── Tally Prime XML export (Purchase vouchers from fabric bills) ──
+  function tallyEscape(s) {
+    return String(s==null?"":s).replace(/&/g,"&amp;").replace(/'/g,"&apos;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function tallyDate(d) { return (d||"").replace(/-/g,""); } // 2026-06-16 -> 20260616
+  function exportTallyPurchase() {
+    const COMPANY = "AASHISH APPARELS 2026-2027";
+    // gather all fabric bills across designs that have a bill no + supplier + amount
+    const bills = [];
+    designs.forEach(dn => (dn.supplierBills||[]).forEach(b => {
+      if (b.supplier && b.supplier.trim() && (+b.amount||0)>0) bills.push({ ...b, designNo:b.designNo||dn.designNo });
+    }));
+    if (bills.length===0) { showToast("No fabric bills to export", "error"); return; }
+    const vouchers = bills.map(b => {
+      const party = tallyEscape(b.supplier.trim());
+      const taxable = +b.amount||0;
+      const gstRate = +b.gstRate||0;
+      const gstType = b.gstType||"CGST+SGST";
+      const gstAmt = taxable*gstRate/100;
+      const partyTotal = taxable + gstAmt;
+      const taxableStr = taxable.toFixed(2);
+      const negTaxable = "-"+taxableStr;
+      const qty = (+b.qty||0).toFixed(2);
+      const rate = (+b.rate||0).toFixed(2);
+      const billNo = tallyEscape(b.billNo||"");
+      const dt = tallyDate(b.billDate);
+      const narr = tallyEscape(b.transporter?`Transport: ${b.transporter}`:"Purchase via app");
+      const stockItem = (b.billType==="Trims") ? "TRIMS" : "FABRIC";
+      const unit = (b.billType==="Trims") ? "PCS" : "MTR";
+      // GST ledger entries
+      let gstLedgers = "";
+      if (gstRate>0) {
+        if (gstType==="IGST") {
+          gstLedgers = `      <LEDGERENTRIES.LIST>
+       <LEDGERNAME>INPUT IGST</LEDGERNAME>
+       <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+       <ISPARTYLEDGER>No</ISPARTYLEDGER>
+       <AMOUNT>${("-"+gstAmt.toFixed(2))}</AMOUNT>
+      </LEDGERENTRIES.LIST>\n`;
+        } else {
+          const half = (gstAmt/2).toFixed(2);
+          gstLedgers = `      <LEDGERENTRIES.LIST>
+       <LEDGERNAME>INPUT CGST</LEDGERNAME>
+       <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+       <ISPARTYLEDGER>No</ISPARTYLEDGER>
+       <AMOUNT>${("-"+half)}</AMOUNT>
+      </LEDGERENTRIES.LIST>
+      <LEDGERENTRIES.LIST>
+       <LEDGERNAME>INPUT SGST</LEDGERNAME>
+       <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+       <ISPARTYLEDGER>No</ISPARTYLEDGER>
+       <AMOUNT>${("-"+half)}</AMOUNT>
+      </LEDGERENTRIES.LIST>\n`;
+        }
+      }
+      const partyAmtStr = partyTotal.toFixed(2);
+      return `    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+     <VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Invoice Voucher View">
+      <DATE>${dt}</DATE>
+      <NARRATION>${narr}</NARRATION>
+      <VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
+      <PARTYLEDGERNAME>${party}</PARTYLEDGERNAME>
+      <PARTYNAME>${party}</PARTYNAME>
+      <VOUCHERNUMBER>${billNo}</VOUCHERNUMBER>
+      <BASICBUYERNAME>${COMPANY}</BASICBUYERNAME>
+      <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
+      <VCHENTRYMODE>Item Invoice</VCHENTRYMODE>
+      <ISINVOICE>Yes</ISINVOICE>
+      <ALLINVENTORYENTRIES.LIST>
+       <STOCKITEMNAME>${stockItem}</STOCKITEMNAME>
+       <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+       <RATE>${rate}/${unit}</RATE>
+       <AMOUNT>${negTaxable}</AMOUNT>
+       <ACTUALQTY> ${qty} ${unit}</ACTUALQTY>
+       <BILLEDQTY> ${qty} ${unit}</BILLEDQTY>
+       <BATCHALLOCATIONS.LIST>
+        <GODOWNNAME>Main Location</GODOWNNAME>
+        <BATCHNAME>Primary Batch</BATCHNAME>
+        <AMOUNT>${negTaxable}</AMOUNT>
+        <ACTUALQTY> ${qty} ${unit}</ACTUALQTY>
+        <BILLEDQTY> ${qty} ${unit}</BILLEDQTY>
+       </BATCHALLOCATIONS.LIST>
+       <ACCOUNTINGALLOCATIONS.LIST>
+        <LEDGERNAME>PURCHASE ACCOUNT</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${negTaxable}</AMOUNT>
+       </ACCOUNTINGALLOCATIONS.LIST>
+      </ALLINVENTORYENTRIES.LIST>
+${gstLedgers}      <LEDGERENTRIES.LIST>
+       <LEDGERNAME>${party}</LEDGERNAME>
+       <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+       <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+       <AMOUNT>${partyAmtStr}</AMOUNT>
+       <BILLALLOCATIONS.LIST>
+        <NAME>${billNo}</NAME>
+        <BILLTYPE>New Ref</BILLTYPE>
+        <AMOUNT>${partyAmtStr}</AMOUNT>
+       </BILLALLOCATIONS.LIST>
+      </LEDGERENTRIES.LIST>
+     </VOUCHER>
+    </TALLYMESSAGE>`;
+    }).join("\n");
+    const xml = `<ENVELOPE>
+ <HEADER>
+  <TALLYREQUEST>Import Data</TALLYREQUEST>
+ </HEADER>
+ <BODY>
+  <IMPORTDATA>
+   <REQUESTDESC>
+    <REPORTNAME>Vouchers</REPORTNAME>
+    <STATICVARIABLES>
+     <SVCURRENTCOMPANY>${COMPANY}</SVCURRENTCOMPANY>
+    </STATICVARIABLES>
+   </REQUESTDESC>
+   <REQUESTDATA>
+${vouchers}
+   </REQUESTDATA>
+  </IMPORTDATA>
+ </BODY>
+</ENVELOPE>`;
+    const blob = new Blob([xml], { type:"application/xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `tally-purchase-${new Date().toISOString().slice(0,10)}.xml`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Tally purchase XML (${bills.length} bills) ✓`);
+  }
+
   function exportExcel() {
     // builds multiple CSV sections in one file, openable in Excel
     function csvCell(v) { const s = String(v==null?"":v).replace(/"/g,'""'); return /[",\n]/.test(s)?`"${s}"`:s; }
@@ -4660,13 +4878,30 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
           {isAdmin && <Btn label="⭳ Backup" onClick={exportBackup} color={T.accent} textColor="#fff" small />}
           {isAdmin && <Btn label="⭱ Restore" onClick={()=>restoreRef.current.click()} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}55` }} />}
           {isAdmin && <Btn label="📊 Excel" onClick={exportExcel} color={T.surface} textColor={T.green} small style={{ border:`1px solid ${T.green}55` }} />}
+          {isAdmin && <Btn label="⇩ Tally" onClick={exportTallyPurchase} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.gold}55` }} />}
           {isAdmin && <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display:"none" }} onChange={handleRestoreFile} />}
           <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
       </div>
       <div style={{ maxWidth:1200, margin:"0 auto", padding:24 }}>
         {tab==="Home" && (
+          <>
           <Dashboard designs={designs} bookings={bookings} bills={bills} payments={payments} people={people} lateDesigns={lateDesigns} isAdmin={isAdmin} onGo={(dest) => { if (dest==="__new__") setCreating(true); else setTab(dest); }} />
+          {isAdmin && (
+            <div style={{ background:T.card, borderRadius:10, padding:16, marginTop:16, border:`1px solid ${T.border}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase" }}>Storage Used (estimate)</span>
+                <span style={{ fontFamily:T.mono, fontSize:13, fontWeight:700, color: storagePct>85?T.red:storagePct>60?T.orange:T.green }}>{storageMB.toFixed(1)} MB / 500 MB</span>
+              </div>
+              <div style={{ background:T.surface, borderRadius:8, height:14, overflow:"hidden" }}>
+                <div style={{ width:`${storagePct}%`, height:"100%", background: storagePct>85?T.red:storagePct>60?T.orange:T.green, transition:"width 0.3s" }} />
+              </div>
+              <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:6 }}>
+                {storagePct>85 ? "⚠ Getting full — time to move photos to free storage. Tell your developer." : storagePct>60 ? "Filling up — keep an eye on it." : "Plenty of space. Photos are the biggest user."}
+              </div>
+            </div>
+          )}
+          </>
         )}
         {tab==="Designs" && (
           <div>
@@ -4938,7 +5173,7 @@ export default function App() {
   ) : null;
 
   if (auth.role === "jobber") {
-    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} onLogout={() => setAuth(null)} /></>;
+    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} onLogout={() => setAuth(null)} /></>;
   }
   return (
     <>
