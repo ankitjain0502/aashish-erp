@@ -1174,80 +1174,65 @@ function ReferencePhotos({ design, onUpdate, role }) {
 }
 
 // ── Supplier Bills ────────────────────────────────────────────────────────────
-function SupplierBills({ design, onUpdate, role }) {
+function SupplierBills({ design, onUpdate, role, allSuppliers = [] }) {
   const canEdit = role === "admin" || role === "team";
-  const [form, setForm] = useState({ supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:"" });
   const [lightbox, setLightbox] = useState(null);
   const bills = design.supplierBills || [];
-  const upd = k => v => setForm(f => ({ ...f, [k]:v }));
-  function setQtyRate(k,v){ setForm(f => { const nf={...f,[k]:v}; nf.amount = ((+nf.qty||0)*(+nf.rate||0))?String(((+nf.qty||0)*(+nf.rate||0))):nf.amount; return nf; }); }
-  function addBill() {
-    if (!form.supplier) return;
-    onUpdate({ ...design, supplierBills:[...bills, { ...form, designNo: design.designNo, id:`B${Date.now()}` }] });
-    setForm({ supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:"" });
-  }
-  function removeBill(id) { onUpdate({ ...design, supplierBills:bills.filter(b => b.id!==id) }); }
-  const totalAmt = bills.reduce((a,b) => a+(+b.amount||0), 0);
+  function updBill(id,k,v){ onUpdate({ ...design, supplierBills:bills.map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; }) }); }
+  function addBill(){ onUpdate({ ...design, supplierBills:[...bills, { id:`B${Date.now()}`, designNo:design.designNo, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", transporter:"", transportCost:"", qty:"", rate:"", amount:"", gstRate:"", gstType:"CGST+SGST", roundOff:"", photo:"" }] }); }
+  function removeBill(id){ if(!window.confirm("Delete this bill?")) return; onUpdate({ ...design, supplierBills:bills.filter(b => b.id!==id) }); }
+  function billPhoto(id,file){ if(!file) return; compressImage(file).then(src => updBill(id,"photo",src)).catch(()=>{}); }
+  const totalAmt = bills.reduce((a,b) => a+billTotalWithGST(b), 0);
   const totalQty = bills.reduce((a,b) => a+(+b.qty||0), 0);
   return (
     <div>
-      {canEdit && (
-        <div style={{ background:T.surface, borderRadius:8, padding:14, marginBottom:16 }}>
-          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:10, textTransform:"uppercase" }}>Add Fabric Supplier Bill — Design {design.designNo}</div>
-          <div style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
-            <PhotoUpload label="Bill Photo" value={form.photo} onChange={upd("photo")} size={56} />
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10, flex:1 }}>
-              <Inp label="Bill Date" type="date" value={form.billDate} onChange={upd("billDate")} />
-              <Inp label="Particulars (Supplier)" value={form.supplier} onChange={upd("supplier")} placeholder="Supplier name" />
-              <Inp label="Quantity (meters)" type="number" value={form.qty} onChange={v => setQtyRate("qty",v)} />
-              <Inp label="Rate (Rs.)" type="number" value={form.rate} onChange={v => setQtyRate("rate",v)} />
-              <Inp label="Amount (Rs.)" type="number" value={form.amount} onChange={upd("amount")} />
-              <Inp label="LR Number" value={form.lrNo} onChange={upd("lrNo")} />
-              <Inp label="Bill No" value={form.billNo} onChange={upd("billNo")} />
-            </div>
+      {bills.map(b => (
+        <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:12, border:`1px solid ${b.billNo && b.billNo.trim() ? T.green : T.orange}`, display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+          <FabricBillPhoto bill={b} onPick={file => billPhoto(b.id, file)} />
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))", gap:8, flex:1 }}>
+            <Inp label="Type" value={b.billType||"Fabric"} onChange={v => updBill(b.id,"billType",v)} options={["Fabric","Trims"]} />
+            <Inp label="Bill Date" type="date" value={b.billDate} onChange={v => updBill(b.id,"billDate",v)} />
+            <div style={{ gridColumn:"1 / -1" }}><SupplierPicker value={b.supplier} onChange={v => updBill(b.id,"supplier",v)} allSuppliers={allSuppliers} /></div>
+            <Inp label="Quantity (m)" type="number" value={b.qty} onChange={v => updBill(b.id,"qty",v)} />
+            <Inp label="Rate" type="number" value={b.rate} onChange={v => updBill(b.id,"rate",v)} />
+            <Inp label="Amount" type="number" value={b.amount} onChange={v => updBill(b.id,"amount",v)} />
+            <Inp label="Bill No" value={b.billNo} onChange={v => updBill(b.id,"billNo",v)} />
+            <Inp label="LR No" value={b.lrNo} onChange={v => updBill(b.id,"lrNo",v)} />
+            <Inp label="Transporter" value={b.transporter||""} onChange={v => updBill(b.id,"transporter",v)} placeholder="transporter name" />
+            <Inp label="Transport Cost (Rs.)" type="number" value={b.transportCost||""} onChange={v => updBill(b.id,"transportCost",v)} placeholder="freight cost" />
+            <Inp label="GST %" value={b.gstRate||""} onChange={v => updBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
+            <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
+            <Inp label="Round Off (Rs.)" type="number" value={b.roundOff??""} onChange={v => updBill(b.id,"roundOff",v)} placeholder="auto" />
           </div>
-          <Btn label="+ Add Bill" onClick={addBill} />
+          {(+b.gstRate>0 && +b.amount>0) && (() => {
+            const taxable = +b.amount||0, rate = +b.gstRate||0;
+            const gst = taxable*rate/100; const rawTotal = taxable + gst;
+            const autoRound = Math.round(rawTotal) - rawTotal;
+            const roundOff = b.roundOff!==undefined && b.roundOff!=="" ? +b.roundOff : autoRound;
+            const total = rawTotal + roundOff;
+            return (
+              <div style={{ width:"100%", background:T.bg, borderRadius:6, padding:"8px 12px", fontFamily:T.mono, fontSize:10, color:T.steelLt, display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" }}>
+                <span>Taxable: <b style={{color:T.text}}>Rs.{taxable.toFixed(2)}</b></span>
+                {b.gstType==="IGST"
+                  ? <span>IGST {rate}%: <b style={{color:T.gold}}>Rs.{gst.toFixed(2)}</b></span>
+                  : <><span>CGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span><span>SGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span></>}
+                <span>Round off: <b style={{color:T.steelLt}}>{roundOff>=0?"+":""}{roundOff.toFixed(2)}</b></span>
+                {(b.roundOff===undefined||b.roundOff==="") && Math.abs(autoRound)>0.001 && <button onClick={()=>updBill(b.id,"roundOff",autoRound.toFixed(2))} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:4, padding:"2px 8px", fontFamily:T.mono, fontSize:9, cursor:"pointer" }}>use auto {autoRound>=0?"+":""}{autoRound.toFixed(2)}</button>}
+                <span>Total: <b style={{color:T.white}}>Rs.{total.toFixed(2)}</b></span>
+              </div>
+            );
+          })()}
+          {canEdit && <div style={{ width:"100%", display:"flex", justifyContent:"flex-end" }}><Btn label="✕ Delete Bill" onClick={() => removeBill(b.id)} color={T.red+"22"} textColor={T.red} small /></div>}
+        </div>
+      ))}
+      {canEdit && <Btn label="+ Add Fabric Supplier Bill" onClick={addBill} color={T.gold} textColor={T.bg} />}
+      {bills.length === 0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No bills added yet. Tap "+ Add Fabric Supplier Bill".</div>}
+      {bills.length > 0 && (
+        <div style={{ marginTop:14, background:T.surface, borderRadius:8, padding:"12px 16px", display:"flex", gap:24, flexWrap:"wrap" }}>
+          <span style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>TOTAL QTY: {totalQty} m</span>
+          <span style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:900 }}>TOTAL (with GST): Rs.{totalAmt.toFixed(2)}</span>
         </div>
       )}
-      <div style={{ overflowX:"auto" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-          <thead>
-            <tr style={{ background:T.surface }}>
-              {["Sr","Bill Date","Particulars","Design","Qty","Rate","Amount","LR No","Bill","",].map(h => (
-                <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {bills.map((b,i) => (
-              <tr key={b.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(b.billDate)}` }}>
-                <td style={{ padding:"8px 10px", fontFamily:T.mono, color:T.steelLt }}>{i+1}</td>
-                <td style={{ padding:"8px 10px", color:T.steelLt }}>{b.billDate||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.white, fontWeight:600 }}>{b.supplier}</td>
-                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{b.designNo||design.designNo}</td>
-                <td style={{ padding:"8px 10px", color:T.text, fontFamily:T.mono }}>{b.qty||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>Rs.{b.rate||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{b.amount||"—"}</td>
-                <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono }}>{b.lrNo||"—"}</td>
-                <td style={{ padding:"8px 10px" }}>{b.photo ? <img src={b.photo} alt="" onClick={() => setLightbox(b.photo)} onContextMenu={e=>e.preventDefault()} style={{ width:32, height:32, borderRadius:4, objectFit:"cover", cursor:"pointer" }} draggable={false} /> : <span style={{ color:T.textDim }}>—</span>}</td>
-                <td style={{ padding:"8px 10px" }}>{canEdit && <Btn label="✕" onClick={() => removeBill(b.id)} color={T.red+"22"} textColor={T.red} small />}</td>
-              </tr>
-            ))}
-          </tbody>
-          {bills.length > 0 && (
-            <tfoot>
-              <tr style={{ background:T.surface }}>
-                <td colSpan={4} style={{ padding:"10px", fontFamily:T.mono, fontWeight:700, color:T.gold }}>TOTAL</td>
-                <td style={{ padding:"10px", fontFamily:T.mono, color:T.gold, fontWeight:700 }}>{totalQty}</td>
-                <td />
-                <td style={{ padding:"10px", fontFamily:T.mono, fontWeight:900, color:T.gold, fontSize:14 }}>Rs.{totalAmt.toFixed(2)}</td>
-                <td colSpan={3} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-      {bills.length === 0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>No bills added yet.</div>}
       {lightbox && (
         <div style={{ position:"fixed", inset:0, background:"#000D", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center" }} onClick={() => setLightbox(null)} onContextMenu={e=>e.preventDefault()}>
           <img src={lightbox} alt="" style={{ maxWidth:"90vw", maxHeight:"85vh", borderRadius:8 }} draggable={false} />
@@ -1551,7 +1536,7 @@ function DesignCostSheet({ design, jobbers, challans = [] }) {
         <tbody>
           <tr style={{ borderBottom:`1px solid ${T.border}` }}>
             <td style={{ padding:"10px", color:T.text, fontWeight:600 }}>Fabric (Bills)</td>
-            <td style={{ padding:"10px", color:T.steelLt }}>{design.supplier||"—"}</td>
+            <td style={{ padding:"10px", color:T.steelLt }}>{[...new Set((design.supplierBills||[]).map(b=>b.supplier).filter(Boolean))].join(", ") || design.supplier || "—"}</td>
             <td style={{ padding:"10px", color:T.steelLt }}>{(design.supplierBills||[])[0]?.billDate||"—"}</td>
             <td style={{ padding:"10px", color:T.steelLt }}>{(design.supplierBills||[])[0]?.billNo||"—"}</td>
             <td colSpan={2} style={{ padding:"10px", color:T.steelLt }}>—</td>
@@ -1804,7 +1789,7 @@ function rowToNotif(r) {
 function makePlaceholderDesign(challan, currentUser) {
   return {
     id:`D${Date.now()}`, designNo: challan.designNo||"", lotNo:"", sleeveType:"Full",
-    brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels",
+    brand:"RUDE INC", style:"", fabric:"", supplier:"",
     p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"", collarType:"",
     shrinkageLen:"", shrinkageWid:"", placket:"", washType:"",
     hasEmbroidery:false, hasPrint:false, hasVinyl:false, hasPocket:false, hasButtons:false, hasLabel:false,
@@ -2239,7 +2224,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       {dt==="Customer Orders" && <Section title="Customer Orders"><CustomerOrders design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Photos" && <Section title="Reference Photos & Shirt Details"><ReferencePhotos design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
-      {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} /></Section>}
+      {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} allSuppliers={(design.supplierBills||[]).map(b=>b.supplier).filter(Boolean)} /></Section>}
       {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-proc" title={`Process Register ${design.designNo}`} />}><div id="rpt-proc"><ProcessRegister design={design} jobbers={jobbers} onUpdate={updProcess} role={role} /></div></Section>}
       {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} challans={challans} /></div></Section>}
       {dt==="MRP" && isAdmin && <Section title="MRP & Product Codes"><MRPPanel design={design} onUpdate={save} /></Section>}
@@ -2300,7 +2285,7 @@ function FabricBillPhoto({ bill, onPick }) {
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
 function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [], creditNotes = [] }) {
-  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"Aashish Apparels", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", customSizes:[], photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
+  const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", customSizes:[], photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
   const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","instructions","fabricbill","photos","process","note"];
   // GLOBAL order: once anyone reorders, it becomes the default for all designs (this session + saved on each design)
