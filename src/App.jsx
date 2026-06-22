@@ -2752,7 +2752,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
   const years = [...new Set([...bills.map(b=>yearOf(b.billDate)), ...myPays.map(p=>yearOf(p.date)), new Date().getFullYear()].filter(Boolean))].sort((a,b)=>b-a);
   const rows = [
     ...bills.filter(b=>yearFilter==="all"||yearOf(b.billDate)===yearFilter||yearOf(b.billDate)===null).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:billTotalWithGST(b), credit:0 })),
-    ...myPays.filter(p=>yearFilter==="all"||yearOf(p.date)===yearFilter||yearOf(p.date)===null).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
+    ...myPays.filter(p=>yearFilter==="all"||yearOf(p.date)===yearFilter||yearOf(p.date)===null).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0, payObj:p })),
     ...myCNs.filter(c=>yearFilter==="all"||yearOf(c.cnDate)===yearFilter||yearOf(c.cnDate)===null).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   let run=0; const withBal = rows.map(r=>{ run+=r.debit-r.credit; return {...r,balance:run}; });
@@ -2765,6 +2765,21 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
     recordActivity(currentUser, "Fabric supplier payment", sel, `Rs.${amount}`);
     showToast("Payment recorded ✓");
     setShowPay(false);
+  }
+  const [editPay, setEditPay] = useState(null);
+  async function saveEditedSupPay(updated) {
+    await dbUpsert("payments", payToRow(updated));
+    setPayments(prev => prev.map(x => x.id===updated.id ? updated : x));
+    recordActivity(currentUser, "Edited supplier payment", sel, `Rs.${updated.amount}`);
+    showToast("Payment updated ✓");
+    setEditPay(null);
+  }
+  async function deleteSupPay(id) {
+    if (!window.confirm("Delete this payment? This cannot be undone.")) return;
+    await dbDelete("payments", id);
+    setPayments(prev => prev.filter(x => x.id!==id));
+    recordActivity(currentUser, "Deleted supplier payment", sel, "");
+    showToast("Payment deleted");
   }
 
   return (
@@ -2793,9 +2808,9 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
       </div>
 
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-        <thead><tr style={{ background:T.surface }}>{["Date","Particulars","Bill No","Debit","Credit","Balance"].map(h=><th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+        <thead><tr style={{ background:T.surface }}>{["Date","Particulars","Bill No","Debit","Credit","Balance",""].map(h=><th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
         <tbody>
-          {withBal.length===0 && <tr><td colSpan={6} style={{ padding:16, textAlign:"center", color:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}` }}>No entries{yearFilter==="all"?"":` for ${yearFilter}`}.</td></tr>}
+          {withBal.length===0 && <tr><td colSpan={7} style={{ padding:16, textAlign:"center", color:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}` }}>No entries{yearFilter==="all"?"":` for ${yearFilter}`}.</td></tr>}
           {withBal.map((r,i)=>(
             <tr key={i} style={{ background:i%2===0?T.card:T.surface }}>
               <td style={{ padding:"8px 10px", color:T.steelLt, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.date}</td>
@@ -2804,10 +2819,18 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
               <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.debit?`Rs.${r.debit.toFixed(2)}`:""}</td>
               <td style={{ padding:"8px 10px", color:T.green, fontFamily:T.mono, border:`1px solid ${T.border}` }}>{r.credit?`Rs.${r.credit.toFixed(2)}`:""}</td>
               <td style={{ padding:"8px 10px", color:r.balance>0?T.red:T.green, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}` }}>Rs.{r.balance.toFixed(2)}</td>
+              <td style={{ padding:"6px 8px", border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>
+                {r.payObj && <span style={{ display:"flex", gap:4 }}>
+                  <Btn label="✎" onClick={()=>setEditPay(r.payObj)} color={T.gold+"22"} textColor={T.gold} small />
+                  <Btn label="✕" onClick={()=>deleteSupPay(r.payObj.id)} color={T.red+"22"} textColor={T.red} small />
+                </span>}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {editPay && <EditPaymentModal pay={editPay} onClose={()=>setEditPay(null)} onSave={saveEditedSupPay} />}
 
       {showPay && <FabricPayModal supplier={sel} onClose={()=>setShowPay(false)} onSave={savePayment} />}
       {showCN && <CreditNoteForm partyType="supplier" partyLabel={sel} designs={designs} currentUser={currentUser} onClose={()=>setShowCN(false)} onSave={async (cn) => {
