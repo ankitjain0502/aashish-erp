@@ -1794,10 +1794,10 @@ function recordActivity(who, action, target, detail) {
 }
 
 function notifToRow(n) {
-  return { id:n.id, ts:n.ts||"", who:n.who||"", message:n.message||"", design_id:n.designId||"", read_by:n.readBy||[] };
+  return { id:n.id, ts:n.ts||"", who:n.who||"", message:n.message||"", design_id:n.designId||"", for_user:n.forUser||"", read_by:n.readBy||[] };
 }
 function rowToNotif(r) {
-  return { id:r.id, ts:r.ts||"", who:r.who||"", message:r.message||"", designId:r.design_id||"", readBy:r.read_by||[] };
+  return { id:r.id, ts:r.ts||"", who:r.who||"", message:r.message||"", designId:r.design_id||"", forUser:r.for_user||"", readBy:r.read_by||[] };
 }
 
 // Build a minimal placeholder design from a challan (admin completes details later)
@@ -1843,8 +1843,8 @@ function billsForChallan(c, bills) {
   return (bills||[]).filter(b => b.jobberId===c.jobberId && billDesignNos(b).some(dn => dns.includes(dn)));
 }
 let _notifSink = null;
-function recordNotification(who, message, designId) {
-  const entry = { id:`NOT${Date.now()}${Math.floor(Math.random()*1000)}`, ts:nowStr(), who:who||"", message:message||"", designId:designId||"", readBy:[] };
+function recordNotification(who, message, designId, forUser) {
+  const entry = { id:`NOT${Date.now()}${Math.floor(Math.random()*1000)}`, ts:nowStr(), who:who||"", message:message||"", designId:designId||"", forUser:forUser||"", readBy:[] };
   if (_notifSink) _notifSink(entry);
   dbUpsert("notifications", notifToRow(entry), true);
 }
@@ -3543,6 +3543,11 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
               const updated = { ...design, movements:[...(design.movements||[]), mv] };
               setDesigns(p => p.map(x => x.id===updated.id?updated:x));
               await dbUpsert("movements", mvToRow(mv, design.id));
+              // notify the receiving jobber specifically, with process + design
+              if (c.sendToId && c.sendToId!=="__office__") {
+                const proc = (c.lines||[]).filter(l=>String(l.designNo)===String(dn)).map(l=>l.process).filter(Boolean).join(", ");
+                recordNotification(jname(c.jobberId), `${jname(c.jobberId)} sent you Design ${dn}${proc?` for ${proc}`:""} — ${lineQty} pcs`, design.id, c.sendToId);
+              }
             }
           }
           recordNotification(currentUser, `Challan ${c.challanNo||""} sent to ${targetName}`, "");
@@ -3616,6 +3621,32 @@ function InstructionsBox({ value, onChange, L = (x)=>x }) {
 
 function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClose, onSave, fixedJobber }) {
   const isAdmin = role === "admin";
+  // For a jobber (fixedJobber set): show designs SENT to him, allow multiple challans (partial dispatch),
+  // hide only when he has dispatched the full quantity he received, or design is Completed.
+  const availableDesigns = (() => {
+    if (!fixedJobber) return designs; // admin sees all
+    // qty received by this jobber per design (challans whose sendToId === him)
+    const received = {}; // designNo -> qty received
+    const dispatched = {}; // designNo -> qty he sent onward (his challans that have a sendToId)
+    (challans||[]).forEach(c => {
+      if (c.status==="rejected") return;
+      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty }];
+      if (c.sendToId===fixedJobber) {
+        lns.forEach(l => { const dn=String(l.designNo); received[dn]=(received[dn]||0)+(+l.qty||0); });
+      }
+      if (c.jobberId===fixedJobber && c.sendToId) {
+        lns.forEach(l => { const dn=String(l.designNo); dispatched[dn]=(dispatched[dn]||0)+(+l.qty||0); });
+      }
+    });
+    return designs.filter(d => {
+      const dn = String(d.designNo);
+      if (d.status==="Completed") return false;            // finished designs hidden
+      const rec = received[dn]||0;
+      if (rec<=0) return false;                              // only designs sent to him
+      const disp = dispatched[dn]||0;
+      return disp < rec;                                    // still has undispatched qty → keep showing
+    });
+  })();
   const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"", gstPct:"" });
   const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false }]);
   const updHead = k => v => setHead(f => ({ ...f, [k]:v }));
@@ -3692,10 +3723,13 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 </div>
                 {ln.newDesign
                   ? <input value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} placeholder="New design no" style={{ background:T.bg, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
-                  : <select value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }}>
-                      <option value="">— select —</option>
-                      {designs.map(d => <option key={d.id} value={d.designNo}>{designLabel(d)}</option>)}
-                    </select>
+                  : <>
+                    <input list={`chdl-${ln.id}`} value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} placeholder="type design no or pick" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
+                    <datalist id={`chdl-${ln.id}`}>
+                      {availableDesigns.map(d => <option key={d.id} value={d.designNo}>{designLabel(d)}</option>)}
+                    </datalist>
+                    {fixedJobber && availableDesigns.length===0 && <div style={{ fontFamily:T.mono, fontSize:9, color:T.orange, marginTop:3 }}>No designs to dispatch. Designs appear here when sent to you, and stay until you dispatch the full quantity.</div>}
+                  </>
                 }
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:4, flex:"1 1 100px" }}>
@@ -4332,7 +4366,7 @@ function JobberLedger({ designs, jobbers }) {
 }
 
 // ── Jobber Panel ──────────────────────────────────────────────────────────────
-function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, onLogout }) {
+function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, notifications, setNotifications, onLogout }) {
   const [sel, setSel] = useState(null);
   const [showChallan, setShowChallan] = useState(false);
   const [lang, setLang] = useState("en");
@@ -4385,6 +4419,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           <div style={{ fontSize:11, color:T.steelLt }}>Logged in: <span style={{ color:T.white }}>{user.name}</span> <Badge label="JOBBER" color={T.gold} /></div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <NotificationBell notifications={notifications} currentUser={user.name} userId={user.id} onOpenDesign={(id)=>{ const d=designs.find(x=>x.id===id); if(d) setSel(d); }} onMarkRead={async (n)=>{ const updated={...n, readBy:[...(n.readBy||[]), user.name]}; await dbUpsert("notifications", notifToRow(updated), true); setNotifications(p=>p.map(x=>x.id===n.id?updated:x)); }} />
           <LangToggle lang={lang} setLang={setLang} />
           <Btn label={L("Logout")} onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
@@ -4511,9 +4546,11 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
 }
 
 // ── Notification Bell ─────────────────────────────────────────────────────────
-function NotificationBell({ notifications, currentUser, onOpenDesign, onMarkRead }) {
+function NotificationBell({ notifications, currentUser, userId, onOpenDesign, onMarkRead }) {
   const [open, setOpen] = useState(false);
-  const unread = (notifications||[]).filter(n => !(n.readBy||[]).includes(currentUser));
+  // show notifications addressed to this user (forUser===userId) OR general ones (forUser blank)
+  const visible = (notifications||[]).filter(n => !n.forUser || (userId && n.forUser===userId));
+  const unread = visible.filter(n => !(n.readBy||[]).includes(currentUser));
   return (
     <div style={{ position:"relative" }}>
       <button onClick={() => setOpen(o => !o)} style={{ background:"none", border:"none", cursor:"pointer", position:"relative", padding:"6px 10px", fontSize:18 }}>
@@ -4527,8 +4564,8 @@ function NotificationBell({ notifications, currentUser, onOpenDesign, onMarkRead
               <span style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700, textTransform:"uppercase" }}>Notifications {unread.length>0?`(${unread.length} new)`:""}</span>
               <button onClick={() => setOpen(false)} style={{ background:"none", border:"none", color:T.steelLt, fontSize:22, cursor:"pointer", lineHeight:1 }}>✕</button>
             </div>
-            {(notifications||[]).length === 0 && <div style={{ padding:24, textAlign:"center", color:T.textDim, fontFamily:T.mono, fontSize:12 }}>No notifications yet.</div>}
-            {(notifications||[]).slice(0,40).map(n => {
+            {visible.length === 0 && <div style={{ padding:24, textAlign:"center", color:T.textDim, fontFamily:T.mono, fontSize:12 }}>No notifications yet.</div>}
+            {visible.slice(0,40).map(n => {
               const isUnread = !(n.readBy||[]).includes(currentUser);
               return (
                 <div key={n.id} onClick={() => { onMarkRead(n); if (n.designId) { onOpenDesign(n.designId); setOpen(false); } }} style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, cursor:"pointer", background:isUnread?T.surface:"transparent", display:"flex", gap:8, alignItems:"flex-start" }}>
@@ -5372,7 +5409,7 @@ export default function App() {
   ) : null;
 
   if (auth.role === "jobber") {
-    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} onLogout={() => setAuth(null)} /></>;
+    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} notifications={notifications} setNotifications={setNotifications} onLogout={() => setAuth(null)} /></>;
   }
   return (
     <>
