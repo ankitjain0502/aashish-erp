@@ -4497,10 +4497,77 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
 }
 
 // ── Team / Admin shared design workspace ──────────────────────────────────────
+function TallyExportModal({ designs, onClose, onExport }) {
+  const today = new Date().toISOString().slice(0,10);
+  const [range, setRange] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [includeExported, setIncludeExported] = useState(false);
+
+  // compute effective dates
+  function effectiveDates() {
+    const now = new Date();
+    if (range==="today") return { from:today, to:today };
+    if (range==="week") { const d=new Date(now); d.setDate(d.getDate()-7); return { from:d.toISOString().slice(0,10), to:today }; }
+    if (range==="month") { const d=new Date(now.getFullYear(), now.getMonth(), 1); return { from:d.toISOString().slice(0,10), to:today }; }
+    if (range==="custom") return { from:fromDate, to:toDate };
+    return { from:"", to:"" }; // all
+  }
+  const { from, to } = effectiveDates();
+
+  // count matching bills
+  let total=0, notExported=0, alreadyExported=0;
+  designs.forEach(dn => (dn.supplierBills||[]).forEach(b => {
+    if (!(b.supplier && b.supplier.trim() && (+b.amount||0)>0)) return;
+    const bd = b.billDate||"";
+    if (from && bd < from) return;
+    if (to && bd > to) return;
+    total++;
+    if (b.tallyExported) alreadyExported++; else notExported++;
+  }));
+  const willExport = includeExported ? total : notExported;
+
+  return (
+    <Modal title="Export Purchase Vouchers to Tally" onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:14 }}>Choose which fabric/trims bills to send to Tally Prime. Already-exported bills are skipped unless you tick the box below.</div>
+
+      <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:6 }}>Date Range</label>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+        {[["all","All"],["today","Today"],["week","Last 7 days"],["month","This month"],["custom","Custom"]].map(([v,lbl]) => (
+          <button key={v} onClick={()=>setRange(v)} style={{ background:range===v?T.gold:T.surface, color:range===v?T.bg:T.steelLt, border:`1px solid ${T.border}`, borderRadius:16, padding:"6px 14px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>{lbl}</button>
+        ))}
+      </div>
+      {range==="custom" && (
+        <div style={{ display:"flex", gap:12, marginBottom:12 }}>
+          <Inp label="From" type="date" value={fromDate} onChange={setFromDate} />
+          <Inp label="To" type="date" value={toDate} onChange={setToDate} />
+        </div>
+      )}
+
+      <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", marginBottom:14, background:T.surface, padding:"10px 12px", borderRadius:8, border:`1px solid ${T.border}` }}>
+        <input type="checkbox" checked={includeExported} onChange={e=>setIncludeExported(e.target.checked)} style={{ width:18, height:18 }} />
+        <span style={{ fontSize:12, color:T.text }}>Re-export bills already sent to Tally <span style={{ color:T.textDim }}>(admin — use only if you need to import again)</span></span>
+      </label>
+
+      <div style={{ background:T.bg, borderRadius:8, padding:14, marginBottom:16, border:`1px solid ${T.border}` }}>
+        <div style={{ fontFamily:T.mono, fontSize:12, color:T.text }}>Bills in range: <b style={{color:T.gold}}>{total}</b></div>
+        <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:4 }}>Not yet exported: <b style={{color:T.green}}>{notExported}</b> · Already exported: <b style={{color:T.orange}}>{alreadyExported}</b></div>
+        <div style={{ fontFamily:T.mono, fontSize:13, color:T.white, marginTop:8, fontWeight:700 }}>→ Will export now: <b style={{color:T.accent||T.gold}}>{willExport}</b> bill{willExport!==1?"s":""}</div>
+      </div>
+
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Download Tally XML" onClick={()=>{ onExport({ fromDate:from, toDate:to, includeExported }); onClose(); }} disabled={willExport===0} color={T.gold} textColor={T.bg} />
+      </div>
+    </Modal>
+  );
+}
+
 function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, creditNotes, setCreditNotes, onLogout }) {
   const isAdmin = role === "admin";
   const [tab, setTab] = useState("Home");
   const [showCalc, setShowCalc] = useState(false);
+  const [showTally, setShowTally] = useState(false);
   const [sel, setSel] = useState(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -4598,14 +4665,20 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return String(s==null?"":s).replace(/&/g,"&amp;").replace(/'/g,"&apos;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   }
   function tallyDate(d) { return (d||"").replace(/-/g,""); } // 2026-06-16 -> 20260616
-  function exportTallyPurchase() {
+  function exportTallyPurchase(opts = {}) {
+    const { fromDate = "", toDate = "", includeExported = false } = opts;
     const COMPANY = "AASHISH APPARELS 2026-2027";
-    // gather all fabric bills across designs that have a bill no + supplier + amount
+    // gather fabric bills with bill no + supplier + amount, applying date + exported filters
     const bills = [];
     designs.forEach(dn => (dn.supplierBills||[]).forEach(b => {
-      if (b.supplier && b.supplier.trim() && (+b.amount||0)>0) bills.push({ ...b, designNo:b.designNo||dn.designNo });
+      if (!(b.supplier && b.supplier.trim() && (+b.amount||0)>0)) return;
+      if (!includeExported && b.tallyExported) return;
+      const bd = b.billDate||"";
+      if (fromDate && bd < fromDate) return;
+      if (toDate && bd > toDate) return;
+      bills.push({ ...b, designNo:b.designNo||dn.designNo, _did:dn.id });
     }));
-    if (bills.length===0) { showToast("No fabric bills to export", "error"); return; }
+    if (bills.length===0) { showToast("No bills match (all exported or out of range)", "error"); return; }
     const vouchers = bills.map(b => {
       const party = tallyEscape(b.supplier.trim());
       const taxable = +b.amount||0;
@@ -4719,6 +4792,17 @@ ${vouchers}
     a.href = url; a.download = `tally-purchase-${new Date().toISOString().slice(0,10)}.xml`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    // mark these bills as exported to Tally (so next export skips them)
+    const exportedIds = new Set(bills.map(b => b.id));
+    const affectedDesignIds = new Set(bills.map(b => b._did));
+    const stamp = new Date().toISOString().slice(0,10);
+    const updatedDesigns = designs.map(dn => {
+      if (!affectedDesignIds.has(dn.id)) return dn;
+      return { ...dn, supplierBills:(dn.supplierBills||[]).map(b => exportedIds.has(b.id) ? { ...b, tallyExported:true, tallyExportDate:stamp } : b) };
+    });
+    setDesigns(updatedDesigns);
+    updatedDesigns.filter(dn => affectedDesignIds.has(dn.id)).forEach(dn => { dbUpsert("designs", dToRow(dn)); });
+    recordActivity(currentUser, "Exported to Tally", "Purchase vouchers", `${bills.length} bills`);
     showToast(`Tally purchase XML (${bills.length} bills) ✓`);
   }
 
@@ -4878,7 +4962,7 @@ ${vouchers}
           {isAdmin && <Btn label="⭳ Backup" onClick={exportBackup} color={T.accent} textColor="#fff" small />}
           {isAdmin && <Btn label="⭱ Restore" onClick={()=>restoreRef.current.click()} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}55` }} />}
           {isAdmin && <Btn label="📊 Excel" onClick={exportExcel} color={T.surface} textColor={T.green} small style={{ border:`1px solid ${T.green}55` }} />}
-          {isAdmin && <Btn label="⇩ Tally" onClick={exportTallyPurchase} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.gold}55` }} />}
+          {isAdmin && <Btn label="⇩ Tally" onClick={()=>setShowTally(true)} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.gold}55` }} />}
           {isAdmin && <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display:"none" }} onChange={handleRestoreFile} />}
           <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
@@ -5027,6 +5111,7 @@ ${vouchers}
       </div>
       {/* Floating calculator */}
       {showCalc && <Calculator onClose={()=>setShowCalc(false)} />}
+      {showTally && <TallyExportModal designs={designs} onClose={()=>setShowTally(false)} onExport={(opts)=>{ exportTallyPurchase(opts); }} />}
       <button onClick={()=>setShowCalc(v=>!v)} title="Calculator" style={{ position:"fixed", bottom:24, right:24, width:54, height:54, borderRadius:"50%", border:"none", cursor:"pointer", background:T.accent||T.gold, color:"#fff", fontSize:22, boxShadow:"0 6px 20px rgba(0,0,0,0.3)", zIndex:9997 }}>🧮</button>
       <Toast {...toast} />
     </div>
