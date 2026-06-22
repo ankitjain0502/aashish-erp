@@ -1749,6 +1749,12 @@ function rowToCn(r) {
 }
 function cnDesignNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
 function cnBillNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.billNo||"")).filter(Boolean))]; }
+// Fabric bill amount WITH GST (taxable + GST). Cost sheet uses without-GST; ledger/supplier balance uses this.
+function billTotalWithGST(b) {
+  const taxable = +b.amount||0;
+  const rate = +b.gstRate||0;
+  return taxable + (taxable*rate/100);
+}
 function payToRow(p) {
   return { id:p.id, jobber_id:p.jobberId||"", date:p.date||"", amount:p.amount||0, mode:p.mode||"", channel:p.channel||"bank", note:p.note||"", created_by:p.createdBy||"", created_at_str:p.createdAtStr||"", confirmed:!!p.confirmed, confirm_text:p.confirmText||"", confirm_date:p.confirmDate||"" };
 }
@@ -1796,10 +1802,10 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
 }
 function rowToChallan(r) {
-  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
   // back-compat: if no lines array but has single design, synthesize one line
   if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
   return c;
@@ -1807,6 +1813,7 @@ function rowToChallan(r) {
 // helpers for multi-design challans
 function challanDesigns(c) { return (c.lines && c.lines.length) ? [...new Set(c.lines.map(l=>String(l.designNo)).filter(Boolean))] : (c.designNo?[String(c.designNo)]:[]); }
 function challanTotal(c) { return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.amount||0),0) : (+c.amount||0); }
+function challanTotalWithGST(c) { const base = challanTotal(c); const rate = +c.gstPct||0; return base + (base*rate/100); }
 function challanQty(c) { return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.qty||0),0) : (+c.qty||0); }
 // link helpers: bill <-> challan matched by shared design numbers (same jobber)
 function billDesignNos(b) { return [...new Set((b.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
@@ -2693,7 +2700,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12 }}>
           {filteredNames.map(name => {
             const bills = allBills.filter(b => b.supplier.trim()===name);
-            const billed = bills.reduce((a,b)=>a+(+b.amount||0),0);
+            const billed = bills.reduce((a,b)=>a+billTotalWithGST(b),0);
             const paid = payments.filter(p=>p.jobberId===supPayId(name)).reduce((a,p)=>a+(+p.amount||0),0);
             const bal = billed-paid;
             return (
@@ -2716,7 +2723,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
   const myCNs = (creditNotes||[]).filter(c => c.partyType==="supplier" && c.party===sel);
   const years = [...new Set([...bills.map(b=>yearOf(b.billDate)), ...myPays.map(p=>yearOf(p.date)), new Date().getFullYear()].filter(Boolean))].sort((a,b)=>b-a);
   const rows = [
-    ...bills.filter(b=>yearOf(b.billDate)===yearFilter).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:+b.amount||0, credit:0 })),
+    ...bills.filter(b=>yearOf(b.billDate)===yearFilter).map(b => ({ date:b.billDate||"", particulars:`Design ${b.designNo} — ${b.billType||"Fabric"}${b.billNo?` (Bill ${b.billNo})`:" (no bill no)"}`, ref:b.billNo||"", debit:billTotalWithGST(b), credit:0 })),
     ...myPays.filter(p=>yearOf(p.date)===yearFilter).map(p => ({ date:p.date||"", particulars:`Payment (${p.mode||p.channel})`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
     ...myCNs.filter(c=>yearOf(c.cnDate)===yearFilter).map(c => ({ date:c.cnDate||"", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
@@ -3564,7 +3571,7 @@ function InstructionsBox({ value, onChange, L = (x)=>x }) {
 
 function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClose, onSave, fixedJobber }) {
   const isAdmin = role === "admin";
-  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"" });
+  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), challanNo:"", photo:"", sendToId:"", gstPct:"" });
   const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false }]);
   const updHead = k => v => setHead(f => ({ ...f, [k]:v }));
   const actingJobber = jobbers.find(j => j.id === (fixedJobber || head.jobberId));
@@ -3598,7 +3605,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
     onSave({
-      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId,
+      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct:+head.gstPct||0,
       lines:builtLines, designNo:first.designNo, process:first.process, qty:builtLines.reduce((a,l)=>a+l.qty,0), rate:first.rate, amount:builtLines.reduce((a,l)=>a+l.amount,0),
       isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos
     });
@@ -3682,11 +3689,15 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       })}
       <Btn label="+ Add another design" onClick={addLine} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}`, marginBottom:14 }} />
 
-      {/* Total */}
-      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
+      {/* GST + Total */}
+      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+        <div style={{ width:140 }}>
+          <Inp label="GST % (optional)" value={head.gstPct} onChange={updHead("gstPct")} options={["","5","12","18"]} />
+        </div>
         <div style={{ background:T.bg, borderRadius:8, padding:"10px 18px", border:`1px solid ${T.gold}44` }}>
+          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>Base: Rs.{total}{+head.gstPct>0?` + GST ${head.gstPct}%`:""}</div>
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>CHALLAN TOTAL: </span>
-          <span style={{ fontFamily:T.mono, fontSize:18, color:T.gold, fontWeight:900 }}>Rs.{total}</span>
+          <span style={{ fontFamily:T.mono, fontSize:18, color:T.gold, fontWeight:900 }}>Rs.{(total + total*(+head.gstPct||0)/100).toFixed(2)}</span>
         </div>
       </div>
 
@@ -3752,7 +3763,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const myChallans = (challans||[]).filter(c => c.jobberId===selJ && c.status!=="rejected" && yearOf(c.date)===yearFilter);
   const myCNs = (creditNotes||[]).filter(c => c.partyType==="jobber" && c.party===selJ && yearOf(c.cnDate)===yearFilter);
   const acctRows = [
-    ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}`, ref:c.challanNo||"", debit:challanTotal(c), credit:0 })),
+    ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}${+c.gstPct>0?` (incl ${c.gstPct}% GST)`:""}`, ref:c.challanNo||"", debit:challanTotalWithGST(c), credit:0 })),
     ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})${p.confirmed?` ✓ OK by jobber ${p.confirmDate||""}`:" — awaiting jobber OK"}`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
     ...myCNs.map(c => ({ date:c.cnDate||"", kind:"credit", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
@@ -4028,6 +4039,12 @@ function BillForm({ jobber, designs, selJ, suggestForDesign, challans = [], onCl
   const [gstPct, setGstPct] = useState("5");
   const [hasGst, setHasGst] = useState(true);
   const [roundOff, setRoundOff] = useState(true);
+  // auto-match GST% to selected challans' GST (so bill tallies with challan)
+  useEffect(() => {
+    const selCh = challans.filter(c => selChallans.includes(c.id));
+    const withGst = selCh.find(c => +c.gstPct>0);
+    if (withGst) { setGstPct(String(withGst.gstPct)); setHasGst(true); }
+  }, [selChallans]);
 
   function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", qty:"", rate:"", amount:"" }]); }
   function removeLine(id) { setLines(l => l.filter(x => x.id!==id)); }
@@ -5095,7 +5112,7 @@ ${vouchers}
             {isAdmin && fabricSupplierResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"12px 0 6px" }}>Fabric Suppliers</div>}
             {isAdmin && fabricSupplierResults.map(name => {
               const bills = designs.flatMap(d => (d.supplierBills||[]).filter(b=>b.supplier===name).map(b=>({...b,designNo:b.designNo||d.designNo})));
-              const billed = bills.reduce((a,b)=>a+(+b.amount||0),0);
+              const billed = bills.reduce((a,b)=>a+billTotalWithGST(b),0);
               const paid = payments.filter(p=>p.jobberId==="SUP:"+name).reduce((a,p)=>a+(+p.amount||0),0);
               return (
                 <div key={name} onClick={()=>{ setTab("Fabric Suppliers"); }} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10, border:`1px solid ${T.border}`, cursor:"pointer" }}>
