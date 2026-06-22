@@ -841,6 +841,7 @@ function JobSheetInstructions({ text }) {
 }
 
 function JobSheetView({ design }) {
+  const [showSampleShrink, setShowSampleShrink] = useState(false);
   const sizes = sortSizes(design.activeColors && design.activeColors.length ? design.activeColors : ["S","M","L","XL","XXL"], design.customSizes);
   const hasSizes = (design.colors||[]).some(c => Object.keys(c.sizes||{}).length > 0);
   const totalPcs = (design.colors||[]).reduce((a,c) => a + sizes.reduce((x,s) => x + (+(c.sizes||{})[s]||0), 0), 0);
@@ -880,6 +881,11 @@ function JobSheetView({ design }) {
           ⚠ Sizes not yet filled — the cutting jobber will enter cut quantities per size.
         </div>
       )}
+      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:6 }}>
+        <button onClick={()=>setShowSampleShrink(s=>!s)} style={{ background:showSampleShrink?(T.accent||T.gold):T.surface, color:showSampleShrink?"#fff":T.steelLt, border:`1px solid ${T.border}`, borderRadius:16, padding:"5px 14px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>
+          {showSampleShrink?"✓ ":""}Show Sample Shrinkage
+        </button>
+      </div>
       <div style={{ overflowX:"auto", marginBottom:16 }}>
         <table style={{ borderCollapse:"collapse", fontSize:11, minWidth:"100%" }}>
           <thead>
@@ -887,6 +893,8 @@ function JobSheetView({ design }) {
               <th style={{ padding:"8px 6px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", border:`1px solid ${T.border}` }}>SWATCH</th>
               <th style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", border:`1px solid ${T.border}` }}>COLOR</th>
               <th style={{ padding:"8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}` }}>MTR</th>
+              <th style={{ padding:"8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}` }}>SHRINK</th>
+              {showSampleShrink && <th style={{ padding:"8px", fontFamily:T.mono, fontSize:9, color:T.accent||T.gold, border:`1px solid ${T.border}` }}>SAMPLE SHRINK</th>}
               {sizes.map(s => <th key={s} style={{ padding:"8px 6px", fontFamily:T.mono, fontSize:9, color:T.gold, border:`1px solid ${T.border}`, minWidth:36 }}>{s}</th>)}
               <th style={{ padding:"8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}` }}>TOTAL</th>
               <th style={{ padding:"8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}` }}>REMARK</th>
@@ -904,6 +912,8 @@ function JobSheetView({ design }) {
                   </td>
                   <td style={{ padding:"6px 8px", color:T.white, fontWeight:600, border:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{c.colorName}{c.colorNo?` (${c.colorNo})`:""}</td>
                   <td style={{ padding:"6px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{c.meters}</td>
+                  <td style={{ padding:"6px", color:T.text, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{c.shrinkage||"—"}</td>
+                  {showSampleShrink && <td style={{ padding:"6px", color:T.accent||T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{c.sampleShrinkage||"—"}</td>}
                   {sizes.map(s => <td key={s} style={{ padding:"6px", color:T.text, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{(c.sizes||{})[s]||0}</td>)}
                   <td style={{ padding:"6px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{rt}</td>
                   <td style={{ padding:"6px 8px", color:T.steelLt, border:`1px solid ${T.border}` }}>{c.balance||""}</td>
@@ -913,6 +923,8 @@ function JobSheetView({ design }) {
             <tr style={{ background:T.bg }}>
               <td colSpan={2} style={{ padding:"8px", fontFamily:T.mono, fontWeight:700, color:T.gold, border:`1px solid ${T.border}` }}>TOTAL</td>
               <td style={{ padding:"8px", color:T.gold, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{totalMeters(design)}</td>
+              <td style={{ border:`1px solid ${T.border}` }} />
+              {showSampleShrink && <td style={{ border:`1px solid ${T.border}` }} />}
               {sizes.map(s => <td key={s} style={{ padding:"8px", fontFamily:T.mono, fontWeight:700, color:T.white, border:`1px solid ${T.border}`, textAlign:"center" }}>{(design.colors||[]).reduce((a,c)=>a+(+(c.sizes||{})[s]||0),0)}</td>)}
               <td style={{ padding:"8px", fontFamily:T.mono, fontWeight:900, color:T.gold, border:`1px solid ${T.border}`, textAlign:"center" }}>{totalPcs}</td>
               <td style={{ border:`1px solid ${T.border}` }} />
@@ -2488,6 +2500,10 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                     <Inp label="Color No" value={c.colorNo||""} onChange={v => updColor(c.id,"colorNo",v)} placeholder="201" />
                   </div>
                   <div style={{ marginTop:6 }}><Inp label="Meters" value={c.meters} onChange={v => updColor(c.id,"meters",v)} type="number" /></div>
+                  <div style={{ marginTop:6, display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <div style={{ flex:1, minWidth:90 }}><Inp label="Shrinkage" value={c.shrinkage||""} onChange={v => updColor(c.id,"shrinkage",v)} placeholder="e.g. 3%" /></div>
+                    <div style={{ flex:1, minWidth:90 }}><Inp label="Sample Shrinkage" value={c.sampleShrinkage||""} onChange={v => updColor(c.id,"sampleShrinkage",v)} placeholder="e.g. 2%" /></div>
+                  </div>
                 </div>
               </div>
               <div style={{ marginTop:8 }}><Btn label="Remove" onClick={() => removeColor(c.id)} color={T.red+"22"} textColor={T.red} small /></div>
@@ -2830,7 +2846,7 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
   const [view, setView] = useState(""); // "" = nothing shown, "suppliers", "monthly"
   const [openSupplier, setOpenSupplier] = useState("");
   const [showRecord, setShowRecord] = useState(false);
-  const [showGst, setShowGst] = useState(false); // false=without GST, true=with GST
+  const [amtMode, setAmtMode] = useState("withgst"); // "withgst"=combined total, "split"=fabric+gst+total, "without"=taxable only
 
   const all = [];
   designs.forEach(d => (d.supplierBills||[]).forEach(b => all.push({ ...b, designNo: b.designNo||d.designNo })));
@@ -2866,8 +2882,8 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
         <button onClick={()=>setView(view==="monthly"?"":"monthly")} style={{ background:view==="monthly"?T.gold:T.surface, color:view==="monthly"?T.bg:T.steelLt, border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
           {view==="monthly"?"▼ ":"▶ "}Monthly Summary
         </button>
-        <button onClick={()=>setShowGst(g=>!g)} style={{ background:showGst?T.accent||T.gold:T.surface, color:showGst?"#fff":T.steelLt, border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
-          Amount: {showGst?"With GST":"Without GST"}
+        <button onClick={()=>setAmtMode(m=>m==="withgst"?"split":m==="split"?"without":"withgst")} style={{ background:T.accent||T.gold, color:"#fff", border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          Amount: {amtMode==="withgst"?"Total (with GST)":amtMode==="split"?"Split (Fabric + GST)":"Without GST"}
         </button>
       </div>
 
@@ -2880,31 +2896,40 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
           {supplierNames.map(s => {
             const bills = bySupplier[s];
             const sQty = bills.reduce((a,b)=>a+(+b.qty||0),0);
-            const sAmt = bills.reduce((a,b)=>a+(showGst?billTotalWithGST(b):(+b.amount||0)),0);
+            const sAmt = bills.reduce((a,b)=>a+(amtMode==="without"?(+b.amount||0):billTotalWithGST(b)),0);
+            const sTaxable = bills.reduce((a,b)=>a+(+b.amount||0),0);
+            const sGst = sAmt - sTaxable;
             const open = openSupplier===s;
             return (
               <div key={s} style={{ marginBottom:10, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
                 <div onClick={()=>setOpenSupplier(open?"":s)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", background:T.surface, cursor:"pointer" }}>
                   <span style={{ color:T.white, fontWeight:700, fontSize:14 }}>{open?"▼ ":"▶ "}{s}</span>
-                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>{sQty} m · Rs.{sAmt.toFixed(0)} · {bills.length} bill{bills.length>1?"s":""}</span>
+                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>{sQty} m · {amtMode==="split"?`Fabric Rs.${sTaxable.toFixed(0)} + GST Rs.${sGst.toFixed(0)} = Rs.${sAmt.toFixed(0)}`:`Rs.${sAmt.toFixed(0)}`} · {bills.length} bill{bills.length>1?"s":""}</span>
                 </div>
                 {open && (
                   <div style={{ overflowX:"auto" }}>
                     <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-                      <thead><tr style={{ background:T.card }}>{["Bill Date","Bill No","Design","Qty","Rate","Amount","LR No","Transporter"].map(h => <th key={h} style={{ padding:"7px 9px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
+                      <thead><tr style={{ background:T.card }}>{["Bill Date","Bill No","Design","Qty","Rate",...(amtMode==="split"?["Fabric","GST","Total"]:["Amount"]),"LR No","Transporter"].map(h => <th key={h} style={{ padding:"7px 9px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
                       <tbody>
-                        {bills.map((b,i) => (
+                        {bills.map((b,i) => {
+                          const tax = +b.amount||0; const tot = billTotalWithGST(b); const g = tot - tax;
+                          return (
                           <tr key={b.id||i} style={{ borderBottom:`1px solid ${T.border}` }}>
                             <td style={{ padding:"7px 9px", color:T.steelLt }}>{b.billDate||"—"}</td>
                             <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>{b.billNo||"—"}</td>
                             <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>{b.designNo}</td>
                             <td style={{ padding:"7px 9px", color:T.text, fontFamily:T.mono }}>{b.qty||"—"}</td>
                             <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>Rs.{b.rate||"—"}</td>
-                            <td style={{ padding:"7px 9px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{showGst?billTotalWithGST(b).toFixed(0):(b.amount||"—")}</td>
+                            {amtMode==="split" ? <>
+                              <td style={{ padding:"7px 9px", color:T.text, fontFamily:T.mono }}>Rs.{tax.toFixed(0)}</td>
+                              <td style={{ padding:"7px 9px", color:T.steelLt, fontFamily:T.mono }}>Rs.{g.toFixed(0)}{+b.gstRate>0?` (${b.gstRate}%)`:""}</td>
+                              <td style={{ padding:"7px 9px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{tot.toFixed(0)}</td>
+                            </> : <td style={{ padding:"7px 9px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{amtMode==="without"?tax.toFixed(0):tot.toFixed(0)}</td>}
                             <td style={{ padding:"7px 9px", color:T.steelLt, fontFamily:T.mono }}>{b.lrNo||"—"}</td>
                             <td style={{ padding:"7px 9px", color:T.steelLt }}>{b.transporter||"—"}</td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -3472,9 +3497,12 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
                       <span style={{ color:T.gold, fontFamily:T.mono, minWidth:60 }}>Rs.{l.rate}</span>
                       <span style={{ color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{l.amount}</span>
                       {l.isSplit && <Badge label="split" color={T.steelLt} />}
+                      {l.remark && <span style={{ color:T.textDim, fontStyle:"italic", fontSize:11 }}>· {l.remark}</span>}
                     </div>
                   ))}
-                  {lns.length>1 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, marginTop:3 }}>Challan total: Rs.{challanTotal(c)} · {challanQty(c)} pcs</div>}
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, marginTop:3 }}>
+                    Challan total: Rs.{challanTotal(c)}{+c.gstPct>0?` + ${c.gstPct}% GST = Rs.${challanTotalWithGST(c).toFixed(0)}`:""} · {challanQty(c)} pcs
+                  </div>
                 </td>
                 <td style={{ padding:"8px", verticalAlign:"top" }}>{c.photo ? <img src={c.photo} alt="" onClick={()=>window.open().document.write(`<img src="${c.photo}" style="max-width:100%">`)} style={{ width:28, height:28, borderRadius:4, objectFit:"cover", cursor:"pointer" }} draggable={false} onContextMenu={e=>e.preventDefault()} /> : <span style={{ color:T.textDim }}>—</span>}</td>
                 <td style={{ padding:"8px", verticalAlign:"top" }}>
@@ -3617,7 +3645,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
 
   function save() {
     if (!canSave) return;
-    const builtLines = validLines.map(ln => ({ designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:+ln.rate||0, amount:(+ln.qty||0)*(+ln.rate||0), isSplit:!!ln.isSplit }));
+    const builtLines = validLines.map(ln => ({ designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:+ln.rate||0, amount:(+ln.qty||0)*(+ln.rate||0), isSplit:!!ln.isSplit, remark:ln.remark||"" }));
     const newDesignNos = validLines.filter(ln => lineInfo(ln).isNewDesign).map(ln => String(ln.designNo).trim());
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
@@ -3629,7 +3657,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
   }
 
   return (
-    <Modal title="New Challan (v3 — multi-design)" onClose={onClose}>
+    <Modal title="New Challan" onClose={onClose}>
       {/* Header: jobber, date, challan no */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:14 }}>
         {fixedJobber
@@ -3650,7 +3678,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       </div>
 
       {/* Design lines */}
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Designs in this challan (add as many as needed)</div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Design for this challan</div>
       {lines.map((ln,idx) => {
         const info = lineInfo(ln);
         const dupName = info.dup ? ((jobbers.find(j=>j.id===info.dup.jobberId)||{}).name||"another jobber") : "";
@@ -3691,6 +3719,25 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               </div>
               {lines.length>1 && <Btn label="✕" onClick={() => removeLine(ln.id)} color={T.red+"22"} textColor={T.red} small />}
             </div>
+            {/* Remark */}
+            <div style={{ marginTop:8 }}>
+              <input value={ln.remark||""} onChange={e => updLine(ln.id,"remark",e.target.value)} placeholder="Remark (optional)" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:12, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
+            </div>
+            {/* Read-only design summary (Option 3) */}
+            {(() => {
+              const d = designs.find(x => String(x.designNo)===String(ln.designNo).trim());
+              if (!d) return null;
+              const cols = (d.colors||[]).map(c=>c.colorName).filter(Boolean).join(", ");
+              const pcs = (d.colors||[]).reduce((a,c)=>a+Object.values(c.sizes||{}).reduce((x,v)=>x+(+v||0),0),0);
+              return (
+                <div style={{ marginTop:8, background:T.bg, borderRadius:6, padding:"8px 12px", fontFamily:T.mono, fontSize:10, color:T.steelLt, display:"flex", gap:14, flexWrap:"wrap" }}>
+                  <span>📋 {d.brand||""} {d.style||""}</span>
+                  {d.fabric && <span>Fabric: {d.fabric}</span>}
+                  {cols && <span>Colors: {cols}</span>}
+                  {pcs>0 && <span>Total: {pcs} pcs</span>}
+                </div>
+              );
+            })()}
             {info.isNewDesign && <div style={{ fontFamily:T.mono, fontSize:9, color:T.green, marginTop:6 }}>✓ New placeholder design "{ln.designNo}" will be created.</div>}
             {info.dup && (
               <div style={{ marginTop:8 }}>
