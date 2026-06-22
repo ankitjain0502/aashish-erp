@@ -2709,6 +2709,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
   const [showPay, setShowPay] = useState(false);
   const [showCN, setShowCN] = useState(false);
   const [yearFilter, setYearFilter] = useState("all");
+  const [editPay, setEditPay] = useState(null);
 
   // gather all fabric bills across designs, grouped by supplier name
   const allBills = [];
@@ -2766,7 +2767,6 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
     showToast("Payment recorded ✓");
     setShowPay(false);
   }
-  const [editPay, setEditPay] = useState(null);
   async function saveEditedSupPay(updated) {
     await dbUpsert("payments", payToRow(updated));
     setPayments(prev => prev.map(x => x.id===updated.id ? updated : x));
