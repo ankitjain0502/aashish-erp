@@ -1489,7 +1489,7 @@ function DesignCostSheet({ design, jobbers, challans = [] }) {
   // actual logged work for this design (from challans, not rejected)
   // gather every challan LINE that belongs to this design (challans can hold multiple designs)
   const myCh = [];
-  challans.filter(c => c.status!=="rejected" && challanDesigns(c).includes(String(design.designNo))).forEach(c => {
+  challans.filter(c => c.status!=="rejected" && !c.halfStitch && challanDesigns(c).includes(String(design.designNo))).forEach(c => {
     const dLines = (c.lines||[]).filter(l => String(l.designNo)===String(design.designNo));
     if (dLines.length) dLines.forEach(l => myCh.push({ ...l, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status }));
     else myCh.push({ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status });
@@ -1819,18 +1819,18 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
 }
 function rowToChallan(r) {
-  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
   // back-compat: if no lines array but has single design, synthesize one line
   if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
   return c;
 }
 // helpers for multi-design challans
 function challanDesigns(c) { return (c.lines && c.lines.length) ? [...new Set(c.lines.map(l=>String(l.designNo)).filter(Boolean))] : (c.designNo?[String(c.designNo)]:[]); }
-function challanTotal(c) { return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.amount||0),0) : (+c.amount||0); }
-function challanTotalWithGST(c) { const base = challanTotal(c); const rate = +c.gstPct||0; return base + (base*rate/100); }
+function challanTotal(c) { if (c.halfStitch) return 0; return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.amount||0),0) : (+c.amount||0); }
+function challanTotalWithGST(c) { if (c.halfStitch) return 0; const base = challanTotal(c); const rate = +c.gstPct||0; return base + (base*rate/100); }
 function challanQty(c) { return (c.lines && c.lines.length) ? c.lines.reduce((a,l)=>a+(+l.qty||0),0) : (+c.qty||0); }
 // link helpers: bill <-> challan matched by shared design numbers (same jobber)
 function billDesignNos(b) { return [...new Set((b.lines||[]).map(l=>String(l.designNo)).filter(Boolean))]; }
@@ -2076,7 +2076,7 @@ function ProductionFlow({ design, jobbers }) {
     });
   });
   (design.movements||[]).forEach(m => {
-    rows.push({ kind:"move", date:m.date||m.sentDate||m.receivedDate||"", process:"Movement", jobber:m.jobber||"", from:m.receivedFrom||"", to:m.sentTo||"", qty:m.qty||"", recd:m.receivedDate||"", dlvd:m.sentDate||"", days:daysBetween(m.receivedDate,m.sentDate), remark:m.remark||"" });
+    rows.push({ kind:"move", date:m.date||m.sentDate||m.receivedDate||"", process:m.halfStitch?"Half Stitch":"Movement", jobber:m.jobber||"", from:m.receivedFrom||"", to:m.sentTo||"", qty:m.qty||"", recd:m.receivedDate||"", dlvd:m.sentDate||"", days:daysBetween(m.receivedDate,m.sentDate), remark:m.remark||"" });
   });
   rows.sort((a,b) => { if(!a.date) return 1; if(!b.date) return -1; return a.date.localeCompare(b.date); });
 
@@ -3524,7 +3524,9 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
                     </div>
                   ))}
                   <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, marginTop:3 }}>
-                    Challan total: Rs.{challanTotal(c)}{+c.gstPct>0?` + ${c.gstPct}% GST = Rs.${challanTotalWithGST(c).toFixed(0)}`:""} · {challanQty(c)} pcs
+                    {c.halfStitch
+                      ? <span style={{ color:T.orange }}>◐ Half Stitch (movement only) · {challanQty(c)} pcs</span>
+                      : <>Challan total: Rs.{challanTotal(c)}{+c.gstPct>0?` + ${c.gstPct}% GST = Rs.${challanTotalWithGST(c).toFixed(0)}`:""} · {challanQty(c)} pcs</>}
                   </div>
                 </td>
                 <td style={{ padding:"8px", verticalAlign:"top" }}>{c.photo ? <img src={c.photo} alt="" onClick={()=>window.open().document.write(`<img src="${c.photo}" style="max-width:100%">`)} style={{ width:28, height:28, borderRadius:4, objectFit:"cover", cursor:"pointer" }} draggable={false} onContextMenu={e=>e.preventDefault()} /> : <span style={{ color:T.textDim }}>—</span>}</td>
@@ -3565,7 +3567,7 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
             const design = designs.find(d => String(d.designNo)===dn);
             if (!design) continue;
             const lineQty = +ln.qty||0;
-            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:jname(c.jobberId), receivedFrom:ln.receivedFrom||jname(c.jobberId), sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}`, status:"sent" };
+            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:jname(c.jobberId), receivedFrom:ln.receivedFrom||jname(c.jobberId), sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}${c.halfStitch?" (Half Stitch)":""}`, halfStitch:!!c.halfStitch, status:"sent" };
             const updated = { ...design, movements:[...(design.movements||[]), mv] };
             setDesigns(p => p.map(x => x.id===updated.id?updated:x));
             await dbUpsert("movements", mvToRow(mv, design.id));
@@ -3669,15 +3671,17 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       return disp < rec;                                    // still has undispatched qty → keep showing
     });
   })();
-  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), receivedDate:"", sentDate:"", receivedFrom:"", challanNo:"", photo:"", sendToId:"", gstPct:"" });
-  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]);
+  const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), receivedDate:"", sentDate:"", receivedFrom:"", challanNo:"", photo:"", sendToId:"", gstPct:"", halfStitch:false });
+  const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"Aashish Apparels", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]);
   // auto-fill each line's "Received From" based on who last sent that design to this jobber
   useEffect(() => {
     const me = fixedJobber || head.jobberId;
     if (!me) return;
     setLines(prev => prev.map(ln => {
       const dn = String(ln.designNo||"").trim();
-      if (!dn || ln.receivedFrom) return ln;
+      if (!dn) return ln;
+      // only auto-replace if still default/empty (don't overwrite manual edits)
+      if (ln.receivedFrom && ln.receivedFrom!=="Aashish Apparels") return ln;
       let fromName = "";
       (challans||[]).forEach(c => {
         if (c.sendToId===me && challanDesigns(c).includes(dn)) fromName = (jobbers.find(j=>j.id===c.jobberId)||{}).name || fromName;
@@ -3691,7 +3695,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
   const photoRef = useRef();
   function handlePhoto(e) { const file = e.target.files[0]; if (!file) return; compressImage(file).then(src => updHead("photo")(src)).catch(()=>{}); }
 
-  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]); }
+  function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"Aashish Apparels", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]); }
   function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
   function updLine(id, k, v) { setLines(l => l.map(x => x.id===id ? { ...x, [k]:v } : x)); }
 
@@ -3717,7 +3721,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
     onSave({
-      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct:+head.gstPct||0,
+      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct:head.halfStitch?0:(+head.gstPct||0), halfStitch:!!head.halfStitch,
       lines:builtLines, designNo:first.designNo, process:first.process, qty:builtLines.reduce((a,l)=>a+l.qty,0), rate:first.rate, amount:builtLines.reduce((a,l)=>a+l.amount,0),
       isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos
     });
@@ -3743,6 +3747,13 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
         <Inp label="Challan No" value={head.challanNo} onChange={updHead("challanNo")} />
         <Inp label="Date" type="date" value={head.date} onChange={updHead("date")} />
       </div>
+
+      {/* Half Stitch toggle — movement only, no money, not in cost sheet */}
+      <label style={{ display:"flex", alignItems:"center", gap:10, background:head.halfStitch?T.orange+"22":T.surface, border:`1px solid ${head.halfStitch?T.orange:T.border}`, borderRadius:8, padding:"10px 14px", marginBottom:14, cursor:"pointer" }}>
+        <input type="checkbox" checked={head.halfStitch} onChange={e=>updHead("halfStitch")(e.target.checked)} style={{ width:18, height:18, accentColor:T.orange }} />
+        <span style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>Half Stitch challan</span>
+        <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>(movement only — no rate/amount/GST, not in cost sheet)</span>
+      </label>
 
       {/* Design lines */}
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Designs in this challan — each can have its own sender/receiver</div>
@@ -3779,14 +3790,14 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Qty *</label>
                 <input type="number" value={ln.qty} onChange={e => updLine(ln.id,"qty",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }} />
               </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:4, width:80 }}>
+              {!head.halfStitch && <div style={{ display:"flex", flexDirection:"column", gap:4, width:80 }}>
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Rate</label>
                 <input type="number" value={ln.rate} onChange={e => updLine(ln.id,"rate",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }} />
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:4, width:90 }}>
+              </div>}
+              {!head.halfStitch && <div style={{ display:"flex", flexDirection:"column", gap:4, width:90 }}>
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Amount</label>
                 <div style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:700, padding:"7px 0" }}>Rs.{info.amount}</div>
-              </div>
+              </div>}
               {lines.length>1 && <Btn label="✕" onClick={() => removeLine(ln.id)} color={T.red+"22"} textColor={T.red} small />}
             </div>
             {/* Per-design received/sent tracking */}
@@ -3837,8 +3848,8 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       })}
       <Btn label="+ Add another design" onClick={addLine} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}`, marginBottom:14 }} />
 
-      {/* GST + Total */}
-      <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+      {/* GST + Total — hidden for half-stitch (no money) */}
+      {!head.halfStitch && <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
         <div style={{ width:140 }}>
           <Inp label="GST % (optional)" value={head.gstPct} onChange={updHead("gstPct")} options={["","5","12","18"]} />
         </div>
@@ -3847,7 +3858,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>CHALLAN TOTAL: </span>
           <span style={{ fontFamily:T.mono, fontSize:18, color:T.gold, fontWeight:900 }}>Rs.{(total + total*(+head.gstPct||0)/100).toFixed(2)}</span>
         </div>
-      </div>
+      </div>}
 
       <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:14 }}>
         <Btn label={head.photo?"Change Photo":"+ Challan Photo (optional)"} onClick={()=>photoRef.current.click()} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.border}` }} />
@@ -3911,7 +3922,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const myChallans = (challans||[]).filter(c => c.jobberId===selJ && c.status!=="rejected" && yearOf(c.date)===yearFilter);
   const myCNs = (creditNotes||[]).filter(c => c.partyType==="jobber" && c.party===selJ && yearOf(c.cnDate)===yearFilter);
   const acctRows = [
-    ...myChallans.map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}${+c.gstPct>0?` (incl ${c.gstPct}% GST)`:""}`, ref:c.challanNo||"", debit:challanTotalWithGST(c), credit:0 })),
+    ...myChallans.filter(c=>!c.halfStitch).map(c => ({ date:c.date||"", kind:"debit", particulars:`Designs ${challanDesigns(c).join(", ")}${+c.gstPct>0?` (incl ${c.gstPct}% GST)`:""}`, ref:c.challanNo||"", debit:challanTotalWithGST(c), credit:0 })),
     ...myPays.map(p => ({ date:p.date||"", kind:"credit", particulars:`Payment (${p.mode||p.channel})${p.confirmed?` ✓ OK by jobber ${p.confirmDate||""}`:" — awaiting jobber OK"}`, ref:p.note||"", debit:0, credit:+p.amount||0 })),
     ...myCNs.map(c => ({ date:c.cnDate||"", kind:"credit", particulars:`Credit Note — ${c.reason||"claim"} (Designs ${cnDesignNos(c).join(", ")}${cnBillNos(c).length?` · Bills ${cnBillNos(c).join(", ")}`:""})`, ref:c.cnNo||"", debit:0, credit:+c.total||0 })),
   ].sort((a,b) => (a.date||"").localeCompare(b.date||""));
@@ -4108,7 +4119,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
           </table>
           </>}
 
-          {showBillForm && <BillForm jobber={j} designs={designs} selJ={selJ} suggestForDesign={suggestForDesign} challans={(challans||[]).filter(c => c.jobberId===selJ && c.status==="approved" && !c.billed)} onClose={() => setShowBillForm(false)} onSave={async (bill, usedChallanIds) => {
+          {showBillForm && <BillForm jobber={j} designs={designs} selJ={selJ} suggestForDesign={suggestForDesign} challans={(challans||[]).filter(c => c.jobberId===selJ && c.status==="approved" && !c.billed && !c.halfStitch)} onClose={() => setShowBillForm(false)} onSave={async (bill, usedChallanIds) => {
         await dbUpsert("bills", billToRow(bill));
         setBills(p => [bill,...p]);
         if (usedChallanIds && usedChallanIds.length) {
@@ -4580,7 +4591,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
             const design = designs.find(d => String(d.designNo)===dn);
             if (!design) continue;
             const lineQty = +ln.qty||0;
-            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:user.name, receivedFrom:ln.receivedFrom||user.name, sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}`, status:"sent" };
+            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:user.name, receivedFrom:ln.receivedFrom||user.name, sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}${c.halfStitch?" (Half Stitch)":""}`, halfStitch:!!c.halfStitch, status:"sent" };
             const updated = { ...design, movements:[...(design.movements||[]), mv] };
             setDesigns(p => p.map(x => x.id===updated.id?updated:x));
             await dbUpsert("movements", mvToRow(mv, design.id));
