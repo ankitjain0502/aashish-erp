@@ -978,6 +978,9 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No:
                     <input disabled={!canEdit} value={c.colorNo||""} onChange={e=>updColor(c.id,"colorNo",e.target.value)} placeholder="—" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, color:T.gold, fontFamily:T.mono, fontSize:11, width:50, padding:"2px 6px", marginLeft:4, borderRadius:4 }} />
                   </span>
+                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Shrinkage:
+                    <input disabled={!canEdit} value={c.shrinkage||""} onChange={e=>updColor(c.id,"shrinkage",e.target.value)} placeholder="e.g. 3%" style={{ background:canEdit?T.bg:T.card, border:`1px solid ${T.border}`, color:T.accent||T.gold, fontFamily:T.mono, fontSize:11, width:70, padding:"2px 6px", marginLeft:4, borderRadius:4 }} />
+                  </span>
                   <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>Sleeve: {st}</span>
                 </div>
                 {variants.map(([vlabel, vsizes, vsamples]) => {
@@ -1753,7 +1756,9 @@ function cnBillNos(c) { return [...new Set((c.lines||[]).map(l=>String(l.billNo|
 function billTotalWithGST(b) {
   const taxable = +b.amount||0;
   const rate = +b.gstRate||0;
-  return taxable + (taxable*rate/100);
+  const rawTotal = taxable + (taxable*rate/100);
+  const roundOff = (b.roundOff!==undefined && b.roundOff!=="") ? +b.roundOff : (Math.round(rawTotal)-rawTotal);
+  return rawTotal + roundOff;
 }
 function payToRow(p) {
   return { id:p.id, jobber_id:p.jobberId||"", date:p.date||"", amount:p.amount||0, mode:p.mode||"", channel:p.channel||"bank", note:p.note||"", created_by:p.createdBy||"", created_at_str:p.createdAtStr||"", confirmed:!!p.confirmed, confirm_text:p.confirmText||"", confirm_date:p.confirmDate||"" };
@@ -2362,6 +2367,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
         <div style={G}>
           <Inp label="Design Number *" value={d.designNo} onChange={upd("designNo")} placeholder="e.g. 2084" />
           <Inp label="Lot No (this run)" value={d.lotNo} onChange={upd("lotNo")} placeholder="e.g. 3290" />
+          <Inp label="Sample No" value={d.sampleNo||""} onChange={upd("sampleNo")} placeholder="e.g. S-12" />
           <Inp label="Brand" value={d.brand} onChange={upd("brand")} />
           <Inp label="Style" value={d.style} onChange={upd("style")} />
           <Inp label="Fabric" value={d.fabric} onChange={upd("fabric")} />
@@ -2521,19 +2527,25 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                 <Inp label="Transport Cost (Rs.)" type="number" value={b.transportCost||""} onChange={v => updFabricBill(b.id,"transportCost",v)} placeholder="freight cost" />
                 <Inp label="GST %" value={b.gstRate||""} onChange={v => updFabricBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
                 <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updFabricBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
+                <Inp label="Round Off (Rs.)" type="number" value={b.roundOff??""} onChange={v => updFabricBill(b.id,"roundOff",v)} placeholder="auto" />
               </div>
               {/* GST breakdown — amount entered is taxable (before GST); GST added on top */}
               {(+b.gstRate>0 && +b.amount>0) && (() => {
                 const taxable = +b.amount||0, rate = +b.gstRate||0;
                 const gst = taxable*rate/100;
-                const total = taxable + gst;
+                const rawTotal = taxable + gst;
+                const autoRound = Math.round(rawTotal) - rawTotal; // suggested round off
+                const roundOff = b.roundOff!==undefined && b.roundOff!=="" ? +b.roundOff : autoRound;
+                const total = rawTotal + roundOff;
                 return (
-                  <div style={{ background:T.bg, borderRadius:6, padding:"8px 12px", marginBottom:8, fontFamily:T.mono, fontSize:10, color:T.steelLt, display:"flex", gap:16, flexWrap:"wrap" }}>
+                  <div style={{ background:T.bg, borderRadius:6, padding:"8px 12px", marginBottom:8, fontFamily:T.mono, fontSize:10, color:T.steelLt, display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" }}>
                     <span>Taxable: <b style={{color:T.text}}>Rs.{taxable.toFixed(2)}</b></span>
                     {b.gstType==="IGST"
                       ? <span>IGST {rate}%: <b style={{color:T.gold}}>Rs.{gst.toFixed(2)}</b></span>
                       : <><span>CGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span><span>SGST {(rate/2)}%: <b style={{color:T.gold}}>Rs.{(gst/2).toFixed(2)}</b></span></>}
-                    <span>Total (incl GST): <b style={{color:T.white}}>Rs.{total.toFixed(2)}</b></span>
+                    <span>Round off: <b style={{color:T.steelLt}}>{roundOff>=0?"+":""}{roundOff.toFixed(2)}</b></span>
+                    {(b.roundOff===undefined||b.roundOff==="") && Math.abs(autoRound)>0.001 && <button onClick={()=>updFabricBill(b.id,"roundOff",autoRound.toFixed(2))} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:4, padding:"2px 8px", fontFamily:T.mono, fontSize:9, cursor:"pointer" }}>use auto {autoRound>=0?"+":""}{autoRound.toFixed(2)}</button>}
+                    <span>Total: <b style={{color:T.white}}>Rs.{total.toFixed(2)}</b></span>
                   </div>
                 );
               })()}
@@ -2818,6 +2830,7 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
   const [view, setView] = useState(""); // "" = nothing shown, "suppliers", "monthly"
   const [openSupplier, setOpenSupplier] = useState("");
   const [showRecord, setShowRecord] = useState(false);
+  const [showGst, setShowGst] = useState(false); // false=without GST, true=with GST
 
   const all = [];
   designs.forEach(d => (d.supplierBills||[]).forEach(b => all.push({ ...b, designNo: b.designNo||d.designNo })));
@@ -2853,6 +2866,9 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
         <button onClick={()=>setView(view==="monthly"?"":"monthly")} style={{ background:view==="monthly"?T.gold:T.surface, color:view==="monthly"?T.bg:T.steelLt, border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
           {view==="monthly"?"▼ ":"▶ "}Monthly Summary
         </button>
+        <button onClick={()=>setShowGst(g=>!g)} style={{ background:showGst?T.accent||T.gold:T.surface, color:showGst?"#fff":T.steelLt, border:`1px solid ${T.border}`, borderRadius:20, padding:"8px 18px", fontFamily:T.mono, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          Amount: {showGst?"With GST":"Without GST"}
+        </button>
       </div>
 
       {view==="" && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>Tap "By Supplier" or "Monthly Summary" above to view purchases.</div>}
@@ -2864,7 +2880,7 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
           {supplierNames.map(s => {
             const bills = bySupplier[s];
             const sQty = bills.reduce((a,b)=>a+(+b.qty||0),0);
-            const sAmt = bills.reduce((a,b)=>a+(+b.amount||0),0);
+            const sAmt = bills.reduce((a,b)=>a+(showGst?billTotalWithGST(b):(+b.amount||0)),0);
             const open = openSupplier===s;
             return (
               <div key={s} style={{ marginBottom:10, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
@@ -2884,7 +2900,7 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
                             <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>{b.designNo}</td>
                             <td style={{ padding:"7px 9px", color:T.text, fontFamily:T.mono }}>{b.qty||"—"}</td>
                             <td style={{ padding:"7px 9px", color:T.gold, fontFamily:T.mono }}>Rs.{b.rate||"—"}</td>
-                            <td style={{ padding:"7px 9px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{b.amount||"—"}</td>
+                            <td style={{ padding:"7px 9px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{showGst?billTotalWithGST(b).toFixed(0):(b.amount||"—")}</td>
                             <td style={{ padding:"7px 9px", color:T.steelLt, fontFamily:T.mono }}>{b.lrNo||"—"}</td>
                             <td style={{ padding:"7px 9px", color:T.steelLt }}>{b.transporter||"—"}</td>
                           </tr>
@@ -3774,7 +3790,15 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const acctCredit = acctRows.reduce((a,r)=>a+r.credit,0);
 
   async function deleteBill(id) { await dbDelete("bills", id); setBills(p=>p.filter(b=>b.id!==id)); recordActivity(currentUser, "Deleted bill", `Jobber ${j?.name||""}`, ""); showToast("Bill deleted"); }
-  async function deletePay(id) { await dbDelete("payments", id); setPayments(p=>p.filter(x=>x.id!==id)); recordActivity(currentUser, "Deleted payment", `Jobber ${j?.name||""}`, ""); showToast("Payment deleted"); }
+  async function deletePay(id) { if(!window.confirm("Delete this payment? This cannot be undone.")) return; await dbDelete("payments", id); setPayments(p=>p.filter(x=>x.id!==id)); recordActivity(currentUser, "Deleted payment", `Jobber ${j?.name||""}`, ""); showToast("Payment deleted"); }
+  const [editPay, setEditPay] = useState(null);
+  async function saveEditedPay(updated) {
+    await dbUpsert("payments", payToRow(updated));
+    setPayments(p => p.map(x => x.id===updated.id ? updated : x));
+    recordActivity(currentUser, "Edited payment", `Jobber ${j?.name||""}`, `Rs.${updated.amount}`);
+    showToast("Payment updated ✓");
+    setEditPay(null);
+  }
 
   function exportAccountPDF() {
     const w = window.open("", "_blank");
@@ -3946,7 +3970,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
                   <td style={{ padding:"8px 10px" }}><Badge label={p.channel==="bank"?"Bank":"Cash"} color={p.channel==="bank"?T.gold:T.steelLt} /></td>
                   <td style={{ padding:"8px 10px", color:T.textDim }}>{p.note}</td>
                   <td style={{ padding:"8px 10px", color:T.green, fontFamily:T.mono, fontWeight:700 }}>Rs.{(+p.amount||0).toFixed(2)}</td>
-                  <td style={{ padding:"8px 10px" }}><Btn label="✕" onClick={() => deletePay(p.id)} color={T.red+"22"} textColor={T.red} small /></td>
+                  <td style={{ padding:"8px 10px", display:"flex", gap:4 }}><Btn label="✎" onClick={() => setEditPay(p)} color={T.gold+"22"} textColor={T.gold} small /><Btn label="✕" onClick={() => deletePay(p.id)} color={T.red+"22"} textColor={T.red} small /></td>
                 </tr>
               ))}
             </tbody>
@@ -3965,6 +3989,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
         showToast("Bill saved ✓"); setShowBillForm(false);
       }} currentUser={currentUser} />}
           {showPayForm && <PaymentForm jobber={j} selJ={selJ} onClose={() => setShowPayForm(false)} onSave={async (pay) => { await dbUpsert("payments", payToRow(pay)); setPayments(p => [pay,...p]); recordActivity(currentUser, "Recorded payment", `Jobber ${j?.name||""}`, `Rs.${pay.amount} (${pay.channel})`); showToast("Payment recorded ✓"); setShowPayForm(false); }} currentUser={currentUser} />}
+          {editPay && <EditPaymentModal pay={editPay} onClose={()=>setEditPay(null)} onSave={saveEditedPay} />}
           {showCNForm && <CreditNoteForm partyType="jobber" partyLabel={j?.name||""} designs={designs} currentUser={currentUser} onClose={()=>setShowCNForm(false)} onSave={async (cn) => {
             const full = { ...cn, id:`CN${Date.now()}`, partyType:"jobber", party:selJ, createdAtStr:nowStr() };
             await dbUpsert("credit_notes", cnToRow(full));
@@ -4138,6 +4163,30 @@ function BillForm({ jobber, designs, selJ, suggestForDesign, challans = [], onCl
 }
 
 // ── Payment Form ──────────────────────────────────────────────────────────────
+function EditPaymentModal({ pay, onClose, onSave }) {
+  const [amount, setAmount] = useState(String(pay.amount||""));
+  const [date, setDate] = useState(pay.date||"");
+  const [mode, setMode] = useState(pay.mode||"");
+  const [channel, setChannel] = useState(pay.channel||"bank");
+  const [note, setNote] = useState(pay.note||"");
+  return (
+    <Modal title="Edit Payment" onClose={onClose}>
+      {pay.confirmed && <div style={{ background:T.orange+"22", border:`1px solid ${T.orange}`, borderRadius:6, padding:"8px 12px", marginBottom:12, fontFamily:T.mono, fontSize:10, color:T.orange }}>⚠ This payment was confirmed by the jobber. Editing it will change the confirmed record.</div>}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+        <Inp label="Amount" type="number" value={amount} onChange={setAmount} />
+        <Inp label="Date" type="date" value={date} onChange={setDate} />
+        <Inp label="Mode" value={mode} onChange={setMode} placeholder="e.g. UPI, Cheque" />
+        <Inp label="Channel" value={channel} onChange={setChannel} options={["bank","cash"]} />
+        <div style={{ gridColumn:"1 / -1" }}><Inp label="Note" value={note} onChange={setNote} /></div>
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Changes" onClick={()=>onSave({ ...pay, amount:+amount||0, date, mode, channel, note })} disabled={!amount} color={T.gold} textColor={T.bg} />
+      </div>
+    </Modal>
+  );
+}
+
 function PaymentForm({ jobber, selJ, onClose, onSave, currentUser }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
   const [amount, setAmount] = useState("");
