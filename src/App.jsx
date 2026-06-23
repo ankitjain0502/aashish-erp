@@ -1834,10 +1834,10 @@ function rowToB(r) {
 
 // ── Bills + Payments converters ───────────────────────────────────────────────
 function billToRow(b) {
-  return { id:b.id, jobber_id:b.jobberId||"", bill_no:b.billNo||"", bill_date:b.billDate||"", lines:b.lines||[], gross:b.gross||0, gst_pct:b.gstPct??5, gst_amt:b.gstAmt||0, round_off:b.roundOff||0, total:b.total||0, has_gst:!!b.hasGst, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"" };
+  return { id:b.id, jobber_id:b.jobberId||"", bill_no:b.billNo||"", bill_date:b.billDate||"", lines:b.lines||[], gross:b.gross||0, gst_pct:b.gstPct??5, gst_amt:b.gstAmt||0, round_off:b.roundOff||0, total:b.total||0, has_gst:!!b.hasGst, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"", status:b.status||"approved" };
 }
 function rowToBill(r) {
-  return { id:r.id, jobberId:r.jobber_id||"", billNo:r.bill_no||"", billDate:r.bill_date||"", lines:r.lines||[], gross:r.gross||0, gstPct:r.gst_pct??5, gstAmt:r.gst_amt||0, roundOff:r.round_off||0, total:r.total||0, hasGst:!!r.has_gst, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  return { id:r.id, jobberId:r.jobber_id||"", billNo:r.bill_no||"", billDate:r.bill_date||"", lines:r.lines||[], gross:r.gross||0, gstPct:r.gst_pct??5, gstAmt:r.gst_amt||0, roundOff:r.round_off||0, total:r.total||0, hasGst:!!r.has_gst, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", status:r.status||"approved" };
 }
 // Credit note: party_type "jobber" or "supplier"; party = jobberId or supplier name
 function cnToRow(c) {
@@ -3966,7 +3966,10 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     return { amount, isNewDesign, dup, dupBlocked: dup && !ln.isSplit };
   }
   const total = lines.reduce((a,ln)=>{ const isHalf = !!ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch"); return a+(isHalf?0:((+ln.qty||0)*(+ln.rate||0))); },0);
-  const anyFullLine = lines.some(ln => !(ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch")));
+  const anyFullLine = lines.some(ln => {
+    const isHalfStitch = ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch");
+    return !isHalfStitch; // any non-half-stitch line is money-bearing
+  });
   const anyBlocked = lines.some(ln => lineInfo(ln).dupBlocked);
   const validLines = lines.filter(ln => ln.designNo && ln.qty);
   const canSave = head.jobberId && validLines.length>0 && !anyBlocked;
@@ -4239,7 +4242,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const allMyBills = bills.filter(b => b.jobberId===selJ);
   const allMyPays = payments.filter(p => p.jobberId===selJ);
   const years = Array.from(new Set([...allMyBills.map(b=>yearOf(b.billDate)), ...allMyPays.map(p=>yearOf(p.date)), new Date().getFullYear()].filter(Boolean))).sort((a,b)=>b-a);
-  const myBills = allMyBills.filter(b => yearOf(b.billDate)===yearFilter);
+  const myBills = allMyBills.filter(b => yearOf(b.billDate)===yearFilter && b.status!=="pending");
   const myPays = allMyPays.filter(p => yearOf(p.date)===yearFilter);
 
   const bankBills = myBills.filter(b => b.hasGst);
@@ -4343,6 +4346,38 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
             <Btn label="+ Credit Note" onClick={() => setShowCNForm(true)} color={T.red} textColor="#fff" />
             <Btn label="Export PDF" onClick={exportPDF} color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.gold}44` }} />
           </div>
+          {(() => {
+            const pendingBills = allMyBills.filter(b => b.status==="pending");
+            if (!pendingBills.length) return null;
+            return (
+              <div style={{ background:T.orange+"11", border:`1px solid ${T.orange}`, borderRadius:10, padding:14, marginBottom:16 }}>
+                <div style={{ fontFamily:T.mono, fontSize:11, color:T.orange, textTransform:"uppercase", fontWeight:700, marginBottom:10 }}>🧾 Bills submitted by {j.name} — awaiting approval ({pendingBills.length})</div>
+                {pendingBills.map(b => (
+                  <div key={b.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"8px 0", borderTop:`1px solid ${T.border}`, flexWrap:"wrap" }}>
+                    <span style={{ fontFamily:T.mono, fontSize:12, fontWeight:700 }}>Bill {b.billNo}</span>
+                    <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>{b.billDate} · {(b.lines||[]).length} items</span>
+                    <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:900, color:T.gold }}>Rs.{(+b.total||0).toFixed(0)}</span>
+                    <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+                      <Btn label="✓ Approve" small color={T.green} textColor="#fff" onClick={async()=>{
+                        const updated = { ...b, status:"approved" };
+                        await dbUpsert("bills", billToRow(updated));
+                        setBills(p => p.map(x=>x.id===b.id?updated:x));
+                        // mark the billed challans
+                        const billedDesigns = new Set((b.lines||[]).map(l=>String(l.designNo)));
+                        showToast("Bill approved ✓");
+                      }} />
+                      <Btn label="✕ Reject" small color={T.red+"22"} textColor={T.red} onClick={async()=>{
+                        if(!window.confirm("Reject this bill? The jobber will need to resubmit.")) return;
+                        await dbDelete("bills", b.id);
+                        setBills(p => p.filter(x=>x.id!==b.id));
+                        showToast("Bill rejected");
+                      }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
             {[["account","Account (auto)"],["bank","Bank (GST)"],["combined","Combined"],["cash","Cash"]].map(([v,lbl]) => (
@@ -4761,9 +4796,11 @@ function JobberLedger({ designs, jobbers }) {
 }
 
 // ── Jobber Panel ──────────────────────────────────────────────────────────────
-function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, notifications, setNotifications, locks, setLocks, onLogout }) {
+function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, bills, setBills, notifications, setNotifications, locks, setLocks, onLogout }) {
   const [sel, setSel] = useState(null);
   const [showChallan, setShowChallan] = useState(false);
+  const [showLedger, setShowLedger] = useState(false);
+  const [showSubmitBill, setShowSubmitBill] = useState(false);
   const [lang, setLang] = useState("en");
   const L = makeL(lang);
   const [toast, setToast] = useState({ msg:"", type:"" });
@@ -4830,7 +4867,11 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         })()}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase" }}>Your Assigned Designs — tap to fill sizes</span>
-          <Btn label="+ New Challan" onClick={() => setShowChallan(true)} />
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Btn label="📒 My Account" onClick={() => setShowLedger(true)} color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
+            <Btn label="🧾 Submit Bill" onClick={() => setShowSubmitBill(true)} color={T.surface} textColor={T.green} style={{ border:`1px solid ${T.border}` }} />
+            <Btn label="+ New Challan" onClick={() => setShowChallan(true)} />
+          </div>
         </div>
         {/* Payments awaiting this jobber's confirmation */}
         {(() => {
@@ -4938,8 +4979,139 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         showToast("Challan saved ✓");
         setShowChallan(false);
       }} />}
+      {showLedger && <JobberLedgerModal user={user} challans={challans} payments={payments} bills={bills} onClose={()=>setShowLedger(false)} />}
+      {showSubmitBill && <JobberSubmitBillModal user={user} challans={challans} currentUser={user.name} onClose={()=>setShowSubmitBill(false)} onSubmit={async (bill) => {
+        await dbUpsert("bills", billToRow(bill));
+        recordNotification(user.name, `${user.name} submitted Bill ${bill.billNo} (Rs.${bill.total.toFixed(0)}) for approval`, "");
+        showToast("Bill submitted for approval ✓");
+        setShowSubmitBill(false);
+      }} />}
       <Toast {...toast} />
     </div>
+  );
+}
+
+// ── Jobber Ledger (read-only account view) ────────────────────────────────────
+function JobberLedgerModal({ user, challans, payments, bills = [], onClose }) {
+  // earned = full (non-half) challan amounts done by this jobber
+  const myChallans = (challans||[]).filter(c => c.jobberId===user.id && c.status!=="rejected");
+  const rows = [];
+  myChallans.forEach(c => {
+    const lns = (c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process,qty:c.qty,amount:c.amount,halfStitch:c.halfStitch}];
+    lns.forEach(l => {
+      if (l.halfStitch) return; // half stitch = no money
+      const amt = +l.amount||0;
+      if (amt<=0) return;
+      rows.push({ date:c.date, designNo:l.designNo, process:l.process, qty:l.qty, amount:amt });
+    });
+  });
+  const earned = rows.reduce((a,r)=>a+r.amount,0);
+  const myPayments = (payments||[]).filter(p => p.jobberId===user.id && p.confirmed);
+  const received = myPayments.reduce((a,p)=>a+(+p.amount||0),0);
+  const balance = earned - received;
+  // bills for this jobber (entered by admin OR submitted by jobber) — both visible
+  const myBills = (bills||[]).filter(b => b.jobberId===user.id);
+  const approvedBills = myBills.filter(b => b.status!=="pending");
+  const pendingBills = myBills.filter(b => b.status==="pending");
+  return (
+    <Modal title="📒 My Account" onClose={onClose}>
+      <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:16 }}>
+        <div style={{ flex:1, minWidth:120, background:T.gold+"15", border:`1px solid ${T.gold}`, borderRadius:8, padding:12 }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Total Earned</div>
+          <div style={{ fontFamily:T.mono, fontSize:20, fontWeight:900, color:T.gold }}>Rs.{earned.toFixed(0)}</div>
+        </div>
+        <div style={{ flex:1, minWidth:120, background:T.green+"15", border:`1px solid ${T.green}`, borderRadius:8, padding:12 }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Received</div>
+          <div style={{ fontFamily:T.mono, fontSize:20, fontWeight:900, color:T.green }}>Rs.{received.toFixed(0)}</div>
+        </div>
+        <div style={{ flex:1, minWidth:120, background:T.red+"12", border:`1px solid ${T.red}`, borderRadius:8, padding:12 }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Balance (owed to you)</div>
+          <div style={{ fontFamily:T.mono, fontSize:20, fontWeight:900, color:T.red }}>Rs.{balance.toFixed(0)}</div>
+        </div>
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Work done (full-stitch / paid challans)</div>
+      <div style={{ maxHeight:200, overflow:"auto", marginBottom:16 }}>
+        {rows.length===0 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No paid work yet.</div> :
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:T.mono }}>
+            <thead><tr style={{ color:T.steelLt }}><td style={{ padding:"4px 6px" }}>Date</td><td>Design</td><td>Process</td><td>Qty</td><td style={{ textAlign:"right" }}>Amount</td></tr></thead>
+            <tbody>{rows.map((r,i)=>(<tr key={i} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:"4px 6px" }}>{r.date}</td><td style={{ color:T.gold }}>D{r.designNo}</td><td>{r.process}</td><td>{r.qty}</td><td style={{ textAlign:"right", fontWeight:700 }}>Rs.{r.amount}</td></tr>))}</tbody>
+          </table>}
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.accent, textTransform:"uppercase", marginBottom:8 }}>Bills</div>
+      <div style={{ maxHeight:140, overflow:"auto", marginBottom:16 }}>
+        {myBills.length===0 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No bills yet.</div> :
+          myBills.map((b,i)=>(
+            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, padding:"6px 0", borderTop:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:11, flexWrap:"wrap" }}>
+              <span style={{ color:T.steelLt }}>Bill {b.billNo} · {b.billDate}</span>
+              <span style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <Badge label={b.status==="pending"?"awaiting approval":"approved"} color={b.status==="pending"?T.orange:T.green} />
+                <b style={{ color:T.gold }}>Rs.{(+b.total||0).toFixed(0)}</b>
+              </span>
+            </div>
+          ))}
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.green, textTransform:"uppercase", marginBottom:8 }}>Payments received</div>
+      <div style={{ maxHeight:140, overflow:"auto" }}>
+        {myPayments.length===0 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No payments received yet.</div> :
+          myPayments.map((p,i)=>(<div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", borderTop:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:11 }}><span style={{ color:T.steelLt }}>{p.date}{p.note?` · ${p.note}`:""}</span><span style={{ fontWeight:700, color:T.green }}>Rs.{p.amount}</span></div>))}
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:12 }}>This is a read-only view of your account. Half-stitch work is not counted (movement only).</div>
+    </Modal>
+  );
+}
+
+// ── Jobber Submit Bill (for admin approval) ───────────────────────────────────
+function JobberSubmitBillModal({ user, challans, currentUser, onClose, onSubmit }) {
+  const [billNo, setBillNo] = useState("");
+  const [billDate, setBillDate] = useState(new Date().toISOString().slice(0,10));
+  const [hasGst, setHasGst] = useState(false);
+  const [gstPct, setGstPct] = useState("5");
+  const [sel, setSel] = useState([]);
+  const [saving, setSaving] = useState(false);
+  // unbilled, paid (non-half) challans by this jobber
+  const billable = (challans||[]).filter(c => c.jobberId===user.id && c.status!=="rejected" && !c.billed && challanTotal(c)>0);
+  function toggle(id){ setSel(s => s.includes(id)?s.filter(x=>x!==id):[...s,id]); }
+  const selChallans = billable.filter(c => sel.includes(c.id));
+  const gross = selChallans.reduce((a,c)=>a+challanTotal(c),0);
+  const gstAmt = hasGst ? gross*(+gstPct||0)/100 : 0;
+  const total = gross + gstAmt;
+  function submit(){
+    if (!billNo || sel.length===0 || saving) return;
+    setSaving(true);
+    const lines = selChallans.flatMap(c => ((c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process,qty:c.qty,rate:c.rate,amount:c.amount}]).filter(l=>!l.halfStitch).map(l=>({ ...l, challanNo:c.challanNo, date:c.date })));
+    onSubmit({ id:`BILL${Date.now()}`, jobberId:user.id, billNo, billDate, lines, gross, gstPct:+gstPct, gstAmt, roundOff:0, total, hasGst, status:"pending", createdBy:currentUser, createdAtStr:nowStr() });
+  }
+  return (
+    <Modal title="🧾 Submit Bill for Approval" onClose={onClose}>
+      <div style={{ display:"flex", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+        <Inp label="Bill No *" value={billNo} onChange={setBillNo} style={{ minWidth:120 }} />
+        <Inp label="Bill Date" type="date" value={billDate} onChange={setBillDate} style={{ minWidth:150 }} />
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Select your challans to bill ({billable.length} available)</div>
+      <div style={{ maxHeight:200, overflow:"auto", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:8 }}>
+        {billable.length===0 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No unbilled paid challans.</div> :
+          billable.map(c => (
+            <label key={c.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", cursor:"pointer", fontSize:12 }}>
+              <input type="checkbox" checked={sel.includes(c.id)} onChange={()=>toggle(c.id)} style={{ accentColor:T.gold, width:14, height:14 }} />
+              <span style={{ fontFamily:T.mono, color:T.steelLt }}>{c.date}</span>
+              <span style={{ fontFamily:T.mono, color:T.gold }}>D{challanDesigns(c).join(",")}</span>
+              <span style={{ fontFamily:T.mono, marginLeft:"auto", fontWeight:700 }}>Rs.{challanTotal(c)}</span>
+            </label>
+          ))}
+      </div>
+      <label style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, fontSize:12, fontFamily:T.mono, color:T.text }}>
+        <input type="checkbox" checked={hasGst} onChange={e=>setHasGst(e.target.checked)} style={{ accentColor:T.gold }} /> Add GST
+        {hasGst && <select value={gstPct} onChange={e=>setGstPct(e.target.value)} style={{ marginLeft:8, padding:"4px 8px", borderRadius:6, border:`1px solid ${T.border}`, fontFamily:T.mono }}><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option></select>}
+      </label>
+      <div style={{ background:T.bg, borderRadius:8, padding:"10px 16px", marginBottom:14, fontFamily:T.mono, fontSize:13, textAlign:"right" }}>
+        Gross Rs.{gross.toFixed(0)}{hasGst?` + GST Rs.${gstAmt.toFixed(0)}`:""} = <b style={{ color:T.gold, fontSize:16 }}>Rs.{total.toFixed(0)}</b>
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:9, color:T.orange, marginBottom:12 }}>This bill will be sent to admin for approval. It won't affect ledgers until admin approves.</div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label={saving?"Submitting…":"Submit for Approval"} onClick={submit} disabled={!billNo||sel.length===0||saving} color={T.green} textColor="#fff" />
+      </div>
+    </Modal>
   );
 }
 
@@ -5829,7 +6001,7 @@ export default function App() {
   ) : null;
 
   if (auth.role === "jobber") {
-    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} notifications={notifications} setNotifications={setNotifications} locks={locks} setLocks={setLocks} onLogout={() => setAuth(null)} /></>;
+    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} bills={bills} setBills={setBills} notifications={notifications} setNotifications={setNotifications} locks={locks} setLocks={setLocks} onLogout={() => setAuth(null)} /></>;
   }
   return (
     <>
