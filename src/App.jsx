@@ -3843,28 +3843,32 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
   const myInwardLots = (() => {
     const me = fixedJobber || head.jobberId;
     if (!me) return [];
-    const lots = [];
+    // aggregate received per design (from challans sent to me) and dispatched per design (my onward challans)
+    const recv = {}; // designNo -> { qty, fromName, date, challanId }
     (challans||[]).forEach(c => {
       if (c.status==="rejected" || c.sendToId!==me) return;
-      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, sentDate:c.sentDate, process:c.process }];
+      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, sentDate:c.sentDate }];
       lns.forEach(l => {
-        if (l.sentToId && l.sentToId!==me) return; // only lines actually sent to me
-        const dn = String(l.designNo);
-        const recvQty = +l.qty||0;
-        if (recvQty<=0) return;
-        // how much of this design I've already dispatched
-        let disp = 0;
-        (challans||[]).forEach(c2 => {
-          if (c2.jobberId===me && c2.status!=="rejected" && (c2.sendToId || (c2.lines||[]).some(x=>x.sentToId))) {
-            ((c2.lines&&c2.lines.length)?c2.lines:[{designNo:c2.designNo,qty:c2.qty}]).forEach(x=>{ if(String(x.designNo)===dn) disp += +x.qty||0; });
-          }
-        });
-        const pendingQty = recvQty - disp;
-        lots.push({ challanId:c.id, designNo:dn, fromName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||c.receivedFrom||"Aashish Apparels", date:l.sentDate||c.sentDate||c.date||"", qty:recvQty, pendingQty: pendingQty>0?pendingQty:recvQty });
+        if (l.sentToId && l.sentToId!==me) return;
+        const dn = String(l.designNo); const q = +l.qty||0;
+        if (q<=0) return;
+        if (!recv[dn]) recv[dn] = { qty:0, fromName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||c.receivedFrom||"Aashish Apparels", date:l.sentDate||c.sentDate||c.date||"", challanId:c.id };
+        recv[dn].qty += q;
+        const dt = l.sentDate||c.sentDate||c.date||"";
+        if (dt > recv[dn].date) recv[dn].date = dt;
       });
     });
-    // collapse duplicates by design+date+from
-    return lots;
+    const disp = {}; // designNo -> dispatched qty by me
+    (challans||[]).forEach(c2 => {
+      if (c2.jobberId!==me || c2.status==="rejected") return;
+      const sentOnward = c2.sendToId || (c2.lines||[]).some(x=>x.sentToId);
+      if (!sentOnward) return;
+      ((c2.lines&&c2.lines.length)?c2.lines:[{designNo:c2.designNo,qty:c2.qty}]).forEach(x=>{ const dn=String(x.designNo); disp[dn]=(disp[dn]||0)+(+x.qty||0); });
+    });
+    return Object.keys(recv).map(dn => {
+      const received = recv[dn].qty; const dispatched = disp[dn]||0; const pending = received - dispatched;
+      return { designNo:dn, fromName:recv[dn].fromName, date:recv[dn].date, received, dispatched, pendingQty:pending };
+    }).filter(lot => lot.pendingQty > 0); // tallied (fully dispatched) lots disappear
   })();
   function fillFromLot(lot) {
     setLines(prev => {
@@ -3872,11 +3876,39 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       first.designNo = lot.designNo;
       first.receivedFrom = lot.fromName;
       first.receivedDate = lot.date;
-      first.qty = String(lot.pendingQty||lot.qty);
+      first.qty = String(lot.pendingQty||lot.received);
       if (first.rate) first.amount = (+first.qty||0)*(+first.rate||0);
       return [first, ...prev.slice(1)];
     });
   }
+  // Previous-jobber chain for the currently picked design (locked, money-hidden rows shown above the form)
+  const chainDesignNo = lines[0] ? String(lines[0].designNo||"").trim() : "";
+  const prevChain = (() => {
+    if (!chainDesignNo) return [];
+    const me = fixedJobber || head.jobberId;
+    const rows = [];
+    (challans||[]).forEach(c => {
+      if (c.status==="rejected") return;
+      if (!challanDesigns(c).includes(chainDesignNo)) return;
+      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, process:c.process, receivedFrom:c.receivedFrom, sentToId:c.sendToId, receivedDate:c.receivedDate, sentDate:c.sentDate, remark:c.remark }];
+      lns.forEach(l => {
+        if (String(l.designNo)!==chainDesignNo) return;
+        rows.push({
+          who:(jobbers.find(j=>j.id===c.jobberId)||{}).name||"—",
+          process:l.process||c.process||"",
+          qty:+l.qty||0,
+          remark:l.remark||"",
+          from:l.receivedFrom||c.receivedFrom||"",
+          to:(jobbers.find(j=>j.id===(l.sentToId||c.sendToId))||{}).name||(((l.sentToId||c.sendToId)==="__office__")?"Office":""),
+          recd:l.receivedDate||c.receivedDate||"",
+          sent:l.sentDate||c.sentDate||c.date||"",
+          date:c.date||"",
+          half:!!c.halfStitch,
+        });
+      });
+    });
+    return rows.sort((a,b)=>(a.sent||a.date||"").localeCompare(b.sent||b.date||""));
+  })();
   const actingJobber = jobbers.find(j => j.id === (fixedJobber || head.jobberId));
   const mayCreateDesign = isAdmin || (actingJobber && actingJobber.canCreateDesign);
   const photoRef = useRef();
@@ -3966,10 +3998,38 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 <span style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>Design {lot.designNo}</span>
                 <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>from {lot.fromName}</span>
                 <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>recd {lot.date||"—"}</span>
-                <span style={{ fontFamily:T.mono, fontSize:11, color:T.text, fontWeight:700 }}>{lot.qty} pcs</span>
-                {lot.pendingQty<lot.qty && <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>({lot.pendingQty} pending)</span>}
+                <span style={{ fontFamily:T.mono, fontSize:10, color:T.text }}>Recd <b>{lot.received}</b> · Sent <b>{lot.dispatched}</b> · <span style={{ color:T.orange }}>Pending <b>{lot.pendingQty}</b></span></span>
                 <span style={{ marginLeft:"auto", fontFamily:T.mono, fontSize:9, color:T.accent }}>tap to fill →</span>
               </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {fixedJobber && prevChain.length>0 && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:6, letterSpacing:1 }}>Previous work on Design {chainDesignNo} (view only)</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {prevChain.map((r,i) => (
+              <details key={i} style={{ background:T.card, border:`1px solid ${T.border}`, borderLeft:`4px solid ${T.steelLt}`, borderRadius:8 }}>
+                <summary style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", cursor:"pointer", listStyle:"none", flexWrap:"wrap" }}>
+                  <span style={{ fontFamily:T.mono, fontSize:10, color:"#fff", background:T.steelLt, borderRadius:5, padding:"2px 7px", fontWeight:700 }}>{i+1}</span>
+                  <span style={{ fontWeight:700, fontSize:13 }}>{r.who}</span>
+                  {r.process && <span style={{ fontFamily:T.mono, fontSize:10, color:T.accent, background:T.accent+"18", padding:"2px 8px", borderRadius:5 }}>{r.process}{r.half?" (Half)":""}</span>}
+                  <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>🔒 view only</span>
+                  <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginLeft:"auto" }}>{r.qty} pcs · {r.sent||r.date||"—"}</span>
+                </summary>
+                <div style={{ padding:"0 12px 10px 12px" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, fontFamily:T.mono }}>
+                    <tbody>
+                      <tr><td style={{ color:T.steelLt, padding:"3px 6px", width:110 }}>Quantity</td><td style={{ padding:"3px 6px" }}>{r.qty}</td><td style={{ color:T.steelLt, padding:"3px 6px", width:90 }}>Remark</td><td style={{ padding:"3px 6px" }}>{r.remark||"—"}</td></tr>
+                      <tr><td style={{ color:T.steelLt, padding:"3px 6px" }}>Received from</td><td style={{ padding:"3px 6px" }}>{r.from||"—"}</td><td style={{ color:T.steelLt, padding:"3px 6px" }}>Sent to</td><td style={{ padding:"3px 6px" }}>{r.to||"—"}</td></tr>
+                      <tr><td style={{ color:T.steelLt, padding:"3px 6px" }}>Recd date</td><td style={{ padding:"3px 6px" }}>{r.recd||"—"}</td><td style={{ color:T.steelLt, padding:"3px 6px" }}>Sent date</td><td style={{ padding:"3px 6px" }}>{r.sent||"—"}</td></tr>
+                    </tbody>
+                  </table>
+                  <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, fontStyle:"italic", marginTop:4 }}>— rate / amount / GST hidden for previous jobbers —</div>
+                </div>
+              </details>
             ))}
           </div>
         </div>
