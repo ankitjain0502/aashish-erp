@@ -3778,13 +3778,13 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     const dispatched = {}; // designNo -> qty he sent onward (his challans that have a sendToId)
     (challans||[]).forEach(c => {
       if (c.status==="rejected") return;
-      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty }];
-      if (c.sendToId===fixedJobber) {
-        lns.forEach(l => { const dn=String(l.designNo); received[dn]=(received[dn]||0)+(+l.qty||0); });
-      }
-      if (c.jobberId===fixedJobber && c.sendToId) {
-        lns.forEach(l => { const dn=String(l.designNo); dispatched[dn]=(dispatched[dn]||0)+(+l.qty||0); });
-      }
+      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, sentToId:c.sendToId }];
+      lns.forEach(l => {
+        const dn=String(l.designNo);
+        const sentTo = l.sentToId || c.sendToId;
+        if (sentTo===fixedJobber) received[dn]=(received[dn]||0)+(+l.qty||0);   // sent TO me
+        if (c.jobberId===fixedJobber && sentTo) dispatched[dn]=(dispatched[dn]||0)+(+l.qty||0); // I sent onward
+      });
     });
     return designs.filter(d => {
       const dn = String(d.designNo);
@@ -3846,10 +3846,11 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     // aggregate received per design (from challans sent to me) and dispatched per design (my onward challans)
     const recv = {}; // designNo -> { qty, fromName, date, challanId }
     (challans||[]).forEach(c => {
-      if (c.status==="rejected" || c.sendToId!==me) return;
-      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, sentDate:c.sentDate }];
+      if (c.status==="rejected") return;
+      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, sentDate:c.sentDate, sentToId:c.sendToId }];
       lns.forEach(l => {
-        if (l.sentToId && l.sentToId!==me) return;
+        const sentTo = l.sentToId || c.sendToId;
+        if (sentTo!==me) return;            // only lines sent TO me
         const dn = String(l.designNo); const q = +l.qty||0;
         if (q<=0) return;
         if (!recv[dn]) recv[dn] = { qty:0, fromName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||c.receivedFrom||"Aashish Apparels", date:l.sentDate||c.sentDate||c.date||"", challanId:c.id };
@@ -3861,9 +3862,11 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     const disp = {}; // designNo -> dispatched qty by me
     (challans||[]).forEach(c2 => {
       if (c2.jobberId!==me || c2.status==="rejected") return;
-      const sentOnward = c2.sendToId || (c2.lines||[]).some(x=>x.sentToId);
-      if (!sentOnward) return;
-      ((c2.lines&&c2.lines.length)?c2.lines:[{designNo:c2.designNo,qty:c2.qty}]).forEach(x=>{ const dn=String(x.designNo); disp[dn]=(disp[dn]||0)+(+x.qty||0); });
+      ((c2.lines&&c2.lines.length)?c2.lines:[{designNo:c2.designNo,qty:c2.qty,sentToId:c2.sendToId}]).forEach(x=>{
+        const sentTo = x.sentToId || c2.sendToId;
+        if (!sentTo) return;
+        const dn=String(x.designNo); disp[dn]=(disp[dn]||0)+(+x.qty||0);
+      });
     });
     return Object.keys(recv).map(dn => {
       const received = recv[dn].qty; const dispatched = disp[dn]||0; const pending = received - dispatched;
