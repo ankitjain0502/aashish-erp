@@ -169,17 +169,41 @@ function yearOf(dateStr) {
   if (isNaN(d)) return null;
   return d.getFullYear();
 }
-// total pieces helper
-function totalPieces(d) {
+// total pieces helper (FULL sleeve = c.sizes)
+function totalPiecesFull(d) {
   return (d.colors||[]).reduce((a,c) => a+Object.values(c.sizes||{}).reduce((x,v)=>x+(+v||0),0), 0);
+}
+// HALF sleeve pieces (c.sizesHalf)
+function totalPiecesHalf(d) {
+  return (d.colors||[]).reduce((a,c) => a+Object.values(c.sizesHalf||{}).reduce((x,v)=>x+(+v||0),0), 0);
+}
+// total pieces helper (combined both sleeves)
+function totalPieces(d) {
+  return totalPiecesFull(d) + totalPiecesHalf(d);
+}
+// FULL sleeve fabric meters (c.meters) and HALF sleeve fabric (c.metersHalf)
+function totalMetersFull(d) {
+  return (d.colors||[]).reduce((a,c) => a+(+c.meters||0), 0);
+}
+function totalMetersHalf(d) {
+  return (d.colors||[]).reduce((a,c) => a+(+c.metersHalf||0), 0);
 }
 // total sample meters across all colours
 function sampleMeters(d) {
   return (d.colors||[]).reduce((a,c) => a + (c.sampleFabric||[]).reduce((x,sf)=>x+(+sf.meters||0),0), 0);
 }
-// total meters (gross, includes sample fabric)
+// total meters (gross, includes sample fabric) — both sleeves combined
 function totalMeters(d) {
-  return (d.colors||[]).reduce((a,c) => a+(+c.meters||0), 0);
+  return totalMetersFull(d) + totalMetersHalf(d);
+}
+// per-sleeve average = that sleeve's fabric / that sleeve's pieces
+function fabricAverageFull(d) {
+  const pcs = totalPiecesFull(d); if (!pcs) return "";
+  return (totalMetersFull(d) / pcs).toFixed(2);
+}
+function fabricAverageHalf(d) {
+  const pcs = totalPiecesHalf(d); if (!pcs) return "";
+  return (totalMetersHalf(d) / pcs).toFixed(2);
 }
 // COST average = (total meters + trims) / pieces  (sample fabric included — it's a cost)
 function fabricAverage(d) {
@@ -844,6 +868,10 @@ function AveragesBlock({ design }) {
   const items = [
     ["Cost Avg (total ÷ pcs)", fabricAverage(design)||"—", T.gold],
     ["Net Avg (less sample)", fabricAverageNet(design)||"—", T.green],
+    ...(design.sleeveType==="Both" ? [
+      ["Full Sleeve Avg", fabricAverageFull(design)||"—", T.accent],
+      ["Half Sleeve Avg", fabricAverageHalf(design)||"—", T.pink],
+    ] : []),
     ...visibleGroups.map(g => [`Avg ${groupLabel(g)}`, ma[groupKey(g)] || ma.smxxl || "—", T.steelLt]),
     ["Drawing Avg", design.drawingAvg||"—", T.steelLt],
   ];
@@ -1114,10 +1142,15 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
       <datalist id="sleeveopts"><option value="Full" /><option value="Half" /></datalist>
       <div style={{ marginTop:14, background:T.bg, borderRadius:8, padding:"12px 16px", border:`1px solid ${T.border}` }}>
         {!detailed
-          ? <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>GRAND TOTAL: {totalPcs} pcs &nbsp;·&nbsp; Fabric: {totalMeters(design)} m</div>
+          ? <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700, lineHeight:1.7 }}>
+              {design.sleeveType==="Both"
+                ? <>GRAND TOTAL: {totalPieces(design)} pcs (Full {totalPiecesFull(design)} + Half {totalPiecesHalf(design)})<br/>Fabric: Full {totalMetersFull(design)}m + Half {totalMetersHalf(design)}m = {totalMeters(design)}m</>
+                : <>GRAND TOTAL: {totalPieces(design)} pcs &nbsp;·&nbsp; Fabric: {totalMeters(design)} m</>}
+            </div>
           : <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700, lineHeight:1.7 }}>
-              Total {totalPcs} = Sample {totalSample} + Dispatch {totalPcs-totalSample}<br/>
-              Fabric: {(totalMeters(design)-sampleMeters(design)).toFixed(1)} net + {sampleMeters(design).toFixed(1)} sample = {totalMeters(design)} m
+              {design.sleeveType==="Both" && <>Full {totalPiecesFull(design)} + Half {totalPiecesHalf(design)} = {totalPieces(design)} pcs<br/></>}
+              Total {totalPieces(design)} = Sample {totalSample} + Dispatch {totalPieces(design)-totalSample}<br/>
+              Fabric: {design.sleeveType==="Both" ? <>Full {totalMetersFull(design)}m + Half {totalMetersHalf(design)}m = {totalMeters(design)}m</> : <>{(totalMeters(design)-sampleMeters(design)).toFixed(1)} net + {sampleMeters(design).toFixed(1)} sample = {totalMeters(design)} m</>}
             </div>
         }
       </div>
@@ -1540,10 +1573,10 @@ function DesignCostSheet({ design, jobbers, challans = [] }) {
   // actual logged work for this design (from challans, not rejected)
   // gather every challan LINE that belongs to this design (challans can hold multiple designs)
   const myCh = [];
-  challans.filter(c => c.status!=="rejected" && !c.halfStitch && challanDesigns(c).includes(String(design.designNo))).forEach(c => {
-    const dLines = (c.lines||[]).filter(l => String(l.designNo)===String(design.designNo));
+  challans.filter(c => c.status!=="rejected" && challanDesigns(c).includes(String(design.designNo))).forEach(c => {
+    const dLines = (c.lines||[]).filter(l => String(l.designNo)===String(design.designNo) && !l.halfStitch);
     if (dLines.length) dLines.forEach(l => myCh.push({ ...l, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status }));
-    else myCh.push({ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status });
+    else if (!c.halfStitch && !(c.lines||[]).length) myCh.push({ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount, date:c.date, challanNo:c.challanNo, jobberId:c.jobberId, status:c.status });
   });
   const chTotal = myCh.reduce((a,c)=>a+(+c.amount||0),0);
   const jn = id => (jobbers.find(j=>j.id===id)||{}).name || id || "—";
@@ -2554,7 +2587,8 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                   <div style={{ marginTop:6 }}>
                     <Inp label="Color No" value={c.colorNo||""} onChange={v => updColor(c.id,"colorNo",v)} placeholder="201" />
                   </div>
-                  <div style={{ marginTop:6 }}><Inp label="Meters" value={c.meters} onChange={v => updColor(c.id,"meters",v)} type="number" /></div>
+                  <div style={{ marginTop:6 }}><Inp label={d.sleeveType==="Both"?"Full Sleeve Meters":"Meters"} value={c.meters} onChange={v => updColor(c.id,"meters",v)} type="number" /></div>
+                  {d.sleeveType==="Both" && <div style={{ marginTop:6 }}><Inp label="Half Sleeve Meters" value={c.metersHalf||""} onChange={v => updColor(c.id,"metersHalf",v)} type="number" /></div>}
                   <div style={{ marginTop:6, display:"flex", gap:8, flexWrap:"wrap" }}>
                     <div style={{ flex:1, minWidth:90 }}><Inp label="Shrinkage" value={c.shrinkage||""} onChange={v => updColor(c.id,"shrinkage",v)} placeholder="e.g. 3%" /></div>
                     <div style={{ flex:1, minWidth:90 }}><Inp label="Sample Shrinkage" value={c.sampleShrinkage||""} onChange={v => updColor(c.id,"sampleShrinkage",v)} placeholder="e.g. 2%" /></div>
@@ -3652,7 +3686,7 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
             const design = designs.find(d => String(d.designNo)===dn);
             if (!design) continue;
             const lineQty = +ln.qty||0;
-            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:jname(c.jobberId), receivedFrom:ln.receivedFrom||jname(c.jobberId), sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}${c.halfStitch?" (Half Stitch)":""}`, halfStitch:!!c.halfStitch, status:"sent" };
+            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:jname(c.jobberId), receivedFrom:ln.receivedFrom||jname(c.jobberId), sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}${ln.halfStitch?" (Half Stitch)":""}`, halfStitch:!!ln.halfStitch, status:"sent" };
             const updated = { ...design, movements:[...(design.movements||[]), mv] };
             setDesigns(p => p.map(x => x.id===updated.id?updated:x));
             await dbUpsert("movements", mvToRow(mv, design.id));
@@ -3931,19 +3965,37 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       : null;
     return { amount, isNewDesign, dup, dupBlocked: dup && !ln.isSplit };
   }
-  const total = lines.reduce((a,ln)=>a+((+ln.qty||0)*(+ln.rate||0)),0);
+  const total = lines.reduce((a,ln)=>{ const isHalf = !!ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch"); return a+(isHalf?0:((+ln.qty||0)*(+ln.rate||0))); },0);
+  const anyFullLine = lines.some(ln => !(ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch")));
   const anyBlocked = lines.some(ln => lineInfo(ln).dupBlocked);
   const validLines = lines.filter(ln => ln.designNo && ln.qty);
   const canSave = head.jobberId && validLines.length>0 && !anyBlocked;
 
+  const [saving, setSaving] = useState(false);
   function save() {
-    if (!canSave) return;
-    const builtLines = validLines.map(ln => ({ designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:+ln.rate||0, amount:(+ln.qty||0)*(+ln.rate||0), isSplit:!!ln.isSplit, remark:ln.remark||"", receivedFrom:ln.receivedFrom||"", sentToId:ln.sentToId||"", receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||"" }));
+    if (!canSave || saving) return;
+    // Guard: warn if an identical challan (same jobber + same design lines + qty) was created very recently
+    const myDesigns = validLines.map(ln => String(ln.designNo).trim()+":"+(+ln.qty||0)).sort().join("|");
+    const dupRecent = (challans||[]).find(c => {
+      if (c.jobberId!==head.jobberId || c.status==="rejected") return false;
+      const cd = ((c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,qty:c.qty}]).map(l=>String(l.designNo).trim()+":"+(+l.qty||0)).sort().join("|");
+      return cd===myDesigns;
+    });
+    if (dupRecent) {
+      const ok = window.confirm(`You already have a challan for the same design(s) and quantity (${validLines.map(l=>"D"+l.designNo+" "+l.qty+"pcs").join(", ")}).\n\nCreate ANOTHER one anyway?`);
+      if (!ok) return;
+    }
+    setSaving(true);
+    const builtLines = validLines.map(ln => {
+      const isHalf = !!ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch");
+      return { designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:isHalf?0:(+ln.rate||0), amount:isHalf?0:((+ln.qty||0)*(+ln.rate||0)), halfStitch:isHalf, isSplit:!!ln.isSplit, remark:ln.remark||"", receivedFrom:ln.receivedFrom||"", sentToId:ln.sentToId||"", receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||"" };
+    });
     const newDesignNos = validLines.filter(ln => lineInfo(ln).isNewDesign).map(ln => String(ln.designNo).trim());
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
+    const allHalf = builtLines.every(l => l.halfStitch);
     onSave({
-      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct:(head.halfStitch && lines.some(l=>(l.process||"").toLowerCase().includes("stitch")))?0:(+head.gstPct||0), halfStitch:!!(head.halfStitch && lines.some(l=>(l.process||"").toLowerCase().includes("stitch"))),
+      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct: allHalf?0:(+head.gstPct||0), halfStitch: allHalf,
       lines:builtLines, designNo:first.designNo, process:first.process, qty:builtLines.reduce((a,l)=>a+l.qty,0), rate:first.rate, amount:builtLines.reduce((a,l)=>a+l.amount,0),
       isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos
     });
@@ -3977,20 +4029,6 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
         <Inp label="Challan No" value={head.challanNo} onChange={updHead("challanNo")} />
         <Inp label="Date" type="date" value={head.date} onChange={updHead("date")} />
       </div>
-
-      {/* Half / Full Stitch choice — only for STITCH process */}
-      {lines.some(l => (l.process||"").toLowerCase().includes("stitch")) && (
-      <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
-        <button onClick={()=>updHead("halfStitch")(true)} style={{ flex:1, minWidth:160, background:head.halfStitch?T.orange+"22":T.surface, border:`2px solid ${head.halfStitch?T.orange:T.border}`, borderRadius:8, padding:"12px 14px", cursor:"pointer", textAlign:"left" }}>
-          <div style={{ fontFamily:T.sans, fontSize:13, color:head.halfStitch?T.orange:T.text, fontWeight:700 }}>◐ Half Stitch</div>
-          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, marginTop:2 }}>movement only — no rate/amount, not in cost sheet</div>
-        </button>
-        <button onClick={()=>updHead("halfStitch")(false)} style={{ flex:1, minWidth:160, background:!head.halfStitch?T.green+"22":T.surface, border:`2px solid ${!head.halfStitch?T.green:T.border}`, borderRadius:8, padding:"12px 14px", cursor:"pointer", textAlign:"left" }}>
-          <div style={{ fontFamily:T.sans, fontSize:13, color:!head.halfStitch?T.green:T.text, fontWeight:700 }}>● Full Stitch</div>
-          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, marginTop:2 }}>with rate/amount — counts in cost sheet</div>
-        </button>
-      </div>
-      )}
 
       {fixedJobber && myInwardLots.length>0 && (
         <div style={{ background:T.accent+"0D", border:`1px solid ${T.accent}44`, borderRadius:8, padding:12, marginBottom:14 }}>
@@ -4073,11 +4111,11 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Qty *</label>
                 <input type="number" value={ln.qty} onChange={e => updLine(ln.id,"qty",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }} />
               </div>
-              {!head.halfStitch && <div style={{ display:"flex", flexDirection:"column", gap:4, width:80 }}>
+              {!(ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch")) && <div style={{ display:"flex", flexDirection:"column", gap:4, width:80 }}>
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Rate</label>
                 <input type="number" value={ln.rate} onChange={e => updLine(ln.id,"rate",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 8px", width:"100%", boxSizing:"border-box" }} />
               </div>}
-              {!head.halfStitch && <div style={{ display:"flex", flexDirection:"column", gap:4, width:90 }}>
+              {!(ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch")) && <div style={{ display:"flex", flexDirection:"column", gap:4, width:90 }}>
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Amount</label>
                 <div style={{ fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:700, padding:"7px 0" }}>Rs.{info.amount}</div>
               </div>}
@@ -4097,6 +4135,19 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               </div>
               <Inp label="Sent Date" type="date" value={ln.sentDate||""} onChange={v => updLine(ln.id,"sentDate",v)} />
             </div>
+            {/* Per-line Half/Full Stitch toggle — only for stitch process */}
+            {(ln.process||"").toLowerCase().includes("stitch") && (
+              <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" }}>
+                <button onClick={()=>updLine(ln.id,"halfStitch",true)} style={{ flex:1, minWidth:140, background:ln.halfStitch?T.orange+"22":T.surface, border:`2px solid ${ln.halfStitch?T.orange:T.border}`, borderRadius:8, padding:"8px 12px", cursor:"pointer", textAlign:"left" }}>
+                  <div style={{ fontFamily:T.sans, fontSize:12, color:ln.halfStitch?T.orange:T.text, fontWeight:700 }}>◐ Half Stitch</div>
+                  <div style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt }}>movement only — no rate/amount</div>
+                </button>
+                <button onClick={()=>updLine(ln.id,"halfStitch",false)} style={{ flex:1, minWidth:140, background:!ln.halfStitch?T.green+"22":T.surface, border:`2px solid ${!ln.halfStitch?T.green:T.border}`, borderRadius:8, padding:"8px 12px", cursor:"pointer", textAlign:"left" }}>
+                  <div style={{ fontFamily:T.sans, fontSize:12, color:!ln.halfStitch?T.green:T.text, fontWeight:700 }}>● Full Stitch</div>
+                  <div style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt }}>with rate/amount — counts in cost</div>
+                </button>
+              </div>
+            )}
             {/* Remark */}
             <div style={{ marginTop:8 }}>
               <input value={ln.remark||""} onChange={e => updLine(ln.id,"remark",e.target.value)} placeholder="Remark (optional)" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:12, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
@@ -4131,8 +4182,8 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       })}
       <Btn label="+ Add another design" onClick={addLine} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}`, marginBottom:14 }} />
 
-      {/* GST + Total — hidden for half-stitch (no money) */}
-      {!head.halfStitch && <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+      {/* GST + Total — shown when at least one full (money-bearing) line exists */}
+      {anyFullLine && <div style={{ display:"flex", justifyContent:"flex-end", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
         <div style={{ width:140 }}>
           <Inp label="GST % (optional)" value={head.gstPct} onChange={updHead("gstPct")} options={["","5","12","18"]} />
         </div>
@@ -4159,7 +4210,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       {!isAdmin && <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginBottom:12 }}>This challan auto-posts to the cost sheet & your ledger now. Admin can reject it later if wrong.</div>}
       <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
         <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
-        <Btn label="Save Challan" onClick={save} disabled={!canSave} />
+        <Btn label={saving?"Saving…":"Save Challan"} onClick={save} disabled={!canSave || saving} />
       </div>
     </Modal>
   );
@@ -4874,7 +4925,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
             const design = designs.find(d => String(d.designNo)===dn);
             if (!design) continue;
             const lineQty = +ln.qty||0;
-            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:user.name, receivedFrom:ln.receivedFrom||user.name, sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}${c.halfStitch?" (Half Stitch)":""}`, halfStitch:!!c.halfStitch, status:"sent" };
+            const mv = { id:`MV${Date.now()}_${dn}_${Math.floor(Math.random()*1000)}`, date:ln.sentDate||c.date||new Date().toISOString().slice(0,10), receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||c.date||"", jobber:user.name, receivedFrom:ln.receivedFrom||user.name, sentTo:targetName, sentToId:lineSendTo==="__office__"?"":lineSendTo, qty:lineQty, remark:`Challan ${c.challanNo||""}${ln.process?" · "+ln.process:""}${ln.halfStitch?" (Half Stitch)":""}`, halfStitch:!!ln.halfStitch, status:"sent" };
             const updated = { ...design, movements:[...(design.movements||[]), mv] };
             setDesigns(p => p.map(x => x.id===updated.id?updated:x));
             await dbUpsert("movements", mvToRow(mv, design.id));
