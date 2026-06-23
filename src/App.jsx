@@ -4905,7 +4905,7 @@ function TallyExportModal({ designs, onClose, onExport }) {
   );
 }
 
-function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, creditNotes, setCreditNotes, onLogout }) {
+function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, bookings, setBookings, bills, setBills, payments, setPayments, activityLog, notifications, setNotifications, challans, setChallans, creditNotes, setCreditNotes, locks, setLocks, onLogout }) {
   const isAdmin = role === "admin";
   const [tab, setTab] = useState("Home");
   const [showCalc, setShowCalc] = useState(false);
@@ -5638,6 +5638,7 @@ export default function App() {
       activityLog={activityLog}
       notifications={notifications} setNotifications={setNotifications}
       challans={challans} setChallans={setChallans}
+      locks={locks} setLocks={setLocks}
       creditNotes={creditNotes} setCreditNotes={setCreditNotes}
       onLogout={() => setAuth(null)}
     />
