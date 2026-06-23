@@ -2177,8 +2177,8 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
   const isTeam = role === "team";
   const isJobber = role === "jobber";
   const DTABS = isJobber
-    ? ["Fill Sizes","Job Sheet","Flow","Photos"]
-    : ["Job Sheet","Fill Sizes","Flow","Customer Orders","Photos","Movement","Supplier Bills",...(isAdmin?["Process Register","Cost Sheet","MRP","Barcode","Pending Approvals"]:[])];
+    ? ["Fill Sizes","Job Sheet","Process & Flow","Photos"]
+    : ["Job Sheet","Fill Sizes","Process & Flow","Customer Orders","Photos","Movement","Supplier Bills",...(isAdmin?["Cost Sheet","MRP","Barcode","Pending Approvals"]:[])];
   const [dt, setDt] = useState(isJobber ? "Fill Sizes" : "Job Sheet");
 
   async function save(updated) {
@@ -2285,13 +2285,17 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
         ))}
       </div>
       {dt==="Job Sheet" && <Section title="Job Register / Job Sheet" action={<PdfBtn targetId="rpt-jobsheet" title={`Job Register ${design.designNo}`} />}><div id="rpt-jobsheet"><JobSheetView design={design} /></div></Section>}
-      {dt==="Flow" && <Section title="Production Flow — full journey" action={<PdfBtn targetId="rpt-flow" title={`Production Flow ${design.designNo}`} />}><div id="rpt-flow"><ProductionFlow design={design} jobbers={jobbers} /></div></Section>}
+      {dt==="Process & Flow" && (
+        <div id="rpt-procflow">
+          {isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-procflow" title={`Process & Flow ${design.designNo}`} />}><ProcessRegister design={design} jobbers={jobbers} challans={challans} onUpdate={updProcess} role={role} /></Section>}
+          <Section title="Production Flow — full journey"><ProductionFlow design={design} jobbers={jobbers} /></Section>
+        </div>
+      )}
       {dt==="Fill Sizes" && <Section title="Job Register — Fill Cut Sizes" action={<PdfBtn targetId="rpt-sizes" title={`Job Register ${designLabel(design)}`} />}><div id="rpt-sizes"><SizeEditor design={design} onUpdate={save} role={role} onConfirmLock={confirmLock} L={L} onSendLot={onSendLot} people={people||jobbers} currentJobber={currentJobber} /></div></Section>}
       {dt==="Customer Orders" && <Section title="Customer Orders"><CustomerOrders design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Photos" && <Section title="Reference Photos & Shirt Details"><ReferencePhotos design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
       {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} allSuppliers={(design.supplierBills||[]).map(b=>b.supplier).filter(Boolean)} locks={locks} setLocks={setLocks} currentUser={currentUser} /></Section>}
-      {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-proc" title={`Process Register ${design.designNo}`} />}><div id="rpt-proc"><ProcessRegister design={design} jobbers={jobbers} challans={challans} onUpdate={updProcess} role={role} /></div></Section>}
       {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} challans={challans} /></div></Section>}
       {dt==="MRP" && isAdmin && <Section title="MRP & Product Codes"><MRPPanel design={design} onUpdate={save} /></Section>}
       {dt==="Barcode" && isAdmin && <Section title="Barcode Generator"><BarcodePanel design={design} jobbers={jobbers} onUpdate={save} /></Section>}
@@ -3793,23 +3797,86 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
   })();
   const [head, setHead] = useState({ jobberId: fixedJobber||"", date:new Date().toISOString().slice(0,10), receivedDate:"", sentDate:"", receivedFrom:"", challanNo:"", photo:"", sendToId:"", gstPct:"", halfStitch:false });
   const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", process:"", qty:"", rate:"", isSplit:false, newDesign:false, receivedFrom:"Aashish Apparels", sentToId:"", receivedDate:"", sentDate:"", remark:"" }]);
-  // auto-fill each line's "Received From" based on who last sent that design to this jobber
+  // Smart pre-fill (Option B): when a jobber picks a design, auto-fill the inward details
+  // (received from = who sent it, received date = when it was sent to him) from the incoming lot.
   useEffect(() => {
     const me = fixedJobber || head.jobberId;
     if (!me) return;
     setLines(prev => prev.map(ln => {
       const dn = String(ln.designNo||"").trim();
       if (!dn) return ln;
-      // only auto-replace if still default/empty (don't overwrite manual edits)
-      if (ln.receivedFrom && ln.receivedFrom!=="Aashish Apparels") return ln;
-      let fromName = "";
+      // find the most recent challan that sent this design TO me
+      let incoming = null;
       (challans||[]).forEach(c => {
-        if (c.sendToId===me && challanDesigns(c).includes(dn)) fromName = (jobbers.find(j=>j.id===c.jobberId)||{}).name || fromName;
+        if (c.sendToId===me && challanDesigns(c).includes(dn)) {
+          if (!incoming || (c.date||"")>(incoming.date||"")) incoming = c;
+        }
       });
-      return fromName ? { ...ln, receivedFrom:fromName } : ln;
+      let nb = { ...ln };
+      // received from (don't overwrite a manual edit other than the default)
+      if (!ln.receivedFrom || ln.receivedFrom==="Aashish Apparels") {
+        const fromName = incoming ? ((jobbers.find(j=>j.id===incoming.jobberId)||{}).name||"") : "";
+        if (fromName) nb.receivedFrom = fromName;
+      }
+      // received date = when the lot was sent to me (incoming sentDate)
+      if (!ln.receivedDate && incoming) {
+        const incLine = (incoming.lines||[]).find(l=>String(l.designNo)===dn);
+        nb.receivedDate = (incLine && (incLine.sentDate||incLine.receivedDate)) || incoming.sentDate || incoming.date || "";
+      }
+      return nb;
     }));
   }, [lines.map(l=>l.designNo).join(","), head.jobberId]);
+  // auto-select challan's main jobber from the design's process assignment (design ↔ challan link)
+  useEffect(() => {
+    if (fixedJobber) return; // jobber's own form — jobber is fixed
+    if (head.jobberId) return; // don't override a manual/existing pick
+    const ln = lines[0];
+    if (!ln || !ln.designNo || !ln.process) return;
+    const design = designs.find(d => String(d.designNo)===String(ln.designNo).trim());
+    if (!design || !design.processes) return;
+    const procKey = Object.keys(design.processes).find(p => (ln.process||"").toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes((ln.process||"").toLowerCase()));
+    const assignedJobber = procKey ? design.processes[procKey]?.jobber : "";
+    if (assignedJobber) setHead(h => ({ ...h, jobberId:assignedJobber }));
+  }, [lines.map(l=>l.designNo+"|"+l.process).join(",")]);
   const updHead = k => v => setHead(f => ({ ...f, [k]:v }));
+  // Pending inward lots for this jobber: lots sent TO him, not yet fully dispatched by him
+  const myInwardLots = (() => {
+    const me = fixedJobber || head.jobberId;
+    if (!me) return [];
+    const lots = [];
+    (challans||[]).forEach(c => {
+      if (c.status==="rejected" || c.sendToId!==me) return;
+      const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, qty:c.qty, sentDate:c.sentDate, process:c.process }];
+      lns.forEach(l => {
+        if (l.sentToId && l.sentToId!==me) return; // only lines actually sent to me
+        const dn = String(l.designNo);
+        const recvQty = +l.qty||0;
+        if (recvQty<=0) return;
+        // how much of this design I've already dispatched
+        let disp = 0;
+        (challans||[]).forEach(c2 => {
+          if (c2.jobberId===me && c2.status!=="rejected" && (c2.sendToId || (c2.lines||[]).some(x=>x.sentToId))) {
+            ((c2.lines&&c2.lines.length)?c2.lines:[{designNo:c2.designNo,qty:c2.qty}]).forEach(x=>{ if(String(x.designNo)===dn) disp += +x.qty||0; });
+          }
+        });
+        const pendingQty = recvQty - disp;
+        lots.push({ challanId:c.id, designNo:dn, fromName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||c.receivedFrom||"Aashish Apparels", date:l.sentDate||c.sentDate||c.date||"", qty:recvQty, pendingQty: pendingQty>0?pendingQty:recvQty });
+      });
+    });
+    // collapse duplicates by design+date+from
+    return lots;
+  })();
+  function fillFromLot(lot) {
+    setLines(prev => {
+      const first = { ...(prev[0]||{}) };
+      first.designNo = lot.designNo;
+      first.receivedFrom = lot.fromName;
+      first.receivedDate = lot.date;
+      first.qty = String(lot.pendingQty||lot.qty);
+      if (first.rate) first.amount = (+first.qty||0)*(+first.rate||0);
+      return [first, ...prev.slice(1)];
+    });
+  }
   const actingJobber = jobbers.find(j => j.id === (fixedJobber || head.jobberId));
   const mayCreateDesign = isAdmin || (actingJobber && actingJobber.canCreateDesign);
   const photoRef = useRef();
@@ -3862,6 +3929,14 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 <option value="">— select jobber —</option>
                 {jobbers.filter(j=>j.role==="jobber").map(j => <option key={j.id} value={j.id}>{j.name && j.name.trim() ? j.name : `(no name — ${j.id})`}</option>)}
               </select>
+              {(() => {
+                const ln = lines[0]; if(!ln||!ln.designNo||!ln.process) return null;
+                const d = designs.find(x=>String(x.designNo)===String(ln.designNo).trim());
+                const pk = d&&d.processes ? Object.keys(d.processes).find(p=>(ln.process||"").toLowerCase().includes(p.toLowerCase())||p.toLowerCase().includes((ln.process||"").toLowerCase())) : null;
+                const aj = pk ? d.processes[pk]?.jobber : "";
+                if (aj && aj===head.jobberId) return <div style={{ fontFamily:T.mono, fontSize:8, color:T.green, marginTop:2 }}>↳ auto from design's {pk} assignment · editable</div>;
+                return null;
+              })()}
             </div>
         }
         <Inp label="Challan No" value={head.challanNo} onChange={updHead("challanNo")} />
@@ -3880,6 +3955,24 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
           <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, marginTop:2 }}>with rate/amount — counts in cost sheet</div>
         </button>
       </div>
+      )}
+
+      {fixedJobber && myInwardLots.length>0 && (
+        <div style={{ background:T.accent+"0D", border:`1px solid ${T.accent}44`, borderRadius:8, padding:12, marginBottom:14 }}>
+          <div style={{ fontFamily:T.mono, fontSize:10, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:8, letterSpacing:1 }}>📥 My Inward Lots — tap one to fill</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {myInwardLots.map((lot,i) => (
+              <button key={i} onClick={()=>fillFromLot(lot)} style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap", background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 12px", cursor:"pointer", textAlign:"left" }}>
+                <span style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>Design {lot.designNo}</span>
+                <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>from {lot.fromName}</span>
+                <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>recd {lot.date||"—"}</span>
+                <span style={{ fontFamily:T.mono, fontSize:11, color:T.text, fontWeight:700 }}>{lot.qty} pcs</span>
+                {lot.pendingQty<lot.qty && <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>({lot.pendingQty} pending)</span>}
+                <span style={{ marginLeft:"auto", fontFamily:T.mono, fontSize:9, color:T.accent }}>tap to fill →</span>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Design lines */}
