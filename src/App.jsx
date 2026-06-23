@@ -3552,11 +3552,17 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
     showToast("Challan rejected — movements removed");
   }
   async function remove(c) {
-    if (!window.confirm(`Delete challan ${c.challanNo||""}? This also removes its movements from the flow. Cannot be undone.`)) return;
+    if (c.billed) { showToast("This challan is in a bill — locked. Delete/edit the bill first."); return; }
+    // warn if a (pending) bill references this challan's designs
+    const dns = new Set(challanDesigns(c).map(String));
+    const inBill = (bills||[]).some(b => (b.lines||[]).some(l => dns.has(String(l.designNo)) && (l.challanNo||"")===(c.challanNo||"")));
+    if (inBill) { showToast("A bill references this challan. Remove it from the bill first."); return; }
+    if (!window.confirm(`Delete challan ${c.challanNo||""}?\n\nThis removes it everywhere — its movements, flow, cost-sheet and ledger effect all go too. Cannot be undone.`)) return;
     await dbDelete("challans", c.id);
     setChallans(p => p.filter(x => x.id!==c.id));
     await removeChallanMovements(c);
-    showToast("Challan deleted — movements removed");
+    recordActivity(currentUser, "Deleted challan", `Designs ${challanDesigns(c).join(", ")}`, "removed everywhere");
+    showToast("Challan deleted — removed everywhere ✓");
   }
   const [editChallan, setEditChallan] = useState(null);
   async function saveEditedChallan(updated) {
@@ -4801,6 +4807,8 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
   const [showChallan, setShowChallan] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
   const [showSubmitBill, setShowSubmitBill] = useState(false);
+  const [showNewDesign, setShowNewDesign] = useState(false);
+  const isStitcher = jobberDoesProcess(user, "Stitch");
   const [lang, setLang] = useState("en");
   const L = makeL(lang);
   const [toast, setToast] = useState({ msg:"", type:"" });
@@ -4868,6 +4876,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase" }}>Your Assigned Designs — tap to fill sizes</span>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {isStitcher && <Btn label="+ New Design" onClick={() => setShowNewDesign(true)} color={T.surface} textColor={T.accent} style={{ border:`1px solid ${T.accent}66` }} />}
             <Btn label="📒 My Account" onClick={() => setShowLedger(true)} color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
             <Btn label="🧾 Submit Bill" onClick={() => setShowSubmitBill(true)} color={T.surface} textColor={T.green} style={{ border:`1px solid ${T.border}` }} />
             <Btn label="+ New Challan" onClick={() => setShowChallan(true)} />
@@ -4986,8 +4995,75 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         showToast("Bill submitted for approval ✓");
         setShowSubmitBill(false);
       }} />}
+      {showNewDesign && <JobberNewDesignModal user={user} designs={designs} currentUser={user.name} onClose={()=>setShowNewDesign(false)} onCreate={async (nd) => {
+        await dbUpsert("designs", dToRow(nd));
+        setDesigns(p => [nd, ...p]);
+        recordNotification(user.name, `New design ${nd.designNo} created by ${user.name} (stitcher) — please complete details`, nd.id);
+        showToast("Design created ✓ Admin can now complete it");
+        setShowNewDesign(false);
+      }} />}
       <Toast {...toast} />
     </div>
+  );
+}
+
+// ── Jobber (stitcher) creates a basic new design ──────────────────────────────
+function JobberNewDesignModal({ user, designs, currentUser, onClose, onCreate }) {
+  const [designNo, setDesignNo] = useState("");
+  const [meters, setMeters] = useState("");
+  const [supplier, setSupplier] = useState("");
+  const [photos, setPhotos] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+  const exists = designNo.trim() && designs.some(d => String(d.designNo)===String(designNo).trim());
+  function addPhotos(e) {
+    const files = Array.from(e.target.files||[]);
+    files.forEach(f => compressImage(f).then(src => setPhotos(p => [...p, src])).catch(()=>{}));
+  }
+  function create() {
+    if (!designNo.trim() || exists || saving) return;
+    setSaving(true);
+    const base = makePlaceholderDesign({ designNo:designNo.trim(), createdBy:currentUser }, currentUser);
+    const nd = {
+      ...base,
+      supplier: supplier.trim(),
+      photos: photos.map((src,i)=>({ src, desc:`swatch ${i+1}` })),
+      colors: meters ? [{ id:`C${Date.now()}`, name:"", meters:String(meters), metersHalf:"", sizes:{}, sizesHalf:{}, sampleFabric:[], shrinkage:"", sampleShrinkage:"" }] : [],
+      notes: `Created by stitcher ${currentUser}. Swatch photos + meters${supplier.trim()?` + supplier ${supplier.trim()}`:""} entered. Admin to complete details.`,
+    };
+    onCreate(nd);
+  }
+  return (
+    <Modal title="+ New Design (stitcher)" onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:14 }}>Enter the basics now — admin will fill the rest. Design number, fabric swatch photos, and total meters.</div>
+      <div style={{ marginBottom:14 }}>
+        <Inp label="Design No *" value={designNo} onChange={setDesignNo} />
+        {exists && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:4 }}>⚠ Design {designNo} already exists — pick a different number.</div>}
+      </div>
+      <div style={{ marginBottom:14 }}>
+        <Inp label="Total Fabric Meters" value={meters} onChange={setMeters} type="number" />
+      </div>
+      <div style={{ marginBottom:14 }}>
+        <Inp label="Fabric Supplier (name only)" value={supplier} onChange={setSupplier} />
+      </div>
+      <div style={{ marginBottom:14 }}>
+        <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:6 }}>Fabric Swatch Photos</label>
+        <Btn label="📷 Add Photo(s)" onClick={()=>fileRef.current.click()} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}66` }} />
+        <input ref={fileRef} type="file" accept="image/*" multiple capture="environment" style={{ display:"none" }} onChange={addPhotos} />
+        {photos.length>0 && <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>
+          {photos.map((src,i)=>(
+            <div key={i} style={{ position:"relative" }}>
+              <img src={src} alt="" style={{ width:60, height:60, borderRadius:6, objectFit:"cover", border:`1px solid ${T.border}` }} />
+              <button onClick={()=>setPhotos(p=>p.filter((_,x)=>x!==i))} style={{ position:"absolute", top:-6, right:-6, background:T.red, color:"#fff", border:"none", borderRadius:"50%", width:18, height:18, fontSize:11, cursor:"pointer", lineHeight:1 }}>×</button>
+            </div>
+          ))}
+        </div>}
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label={saving?"Creating…":"Create Design"} onClick={create} disabled={!designNo.trim()||exists||saving} color={T.accent} textColor="#fff" />
+      </div>
+    </Modal>
   );
 }
 
@@ -5647,12 +5723,38 @@ ${vouchers}
             <Btn label="Edit Design" onClick={() => setEditing(true)} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.gold}44` }} />
             {isAdmin && <Btn label="Delete Design" onClick={async () => {
               if (!sel) return;
-              if (!window.confirm(`Delete design ${sel.designNo}? This permanently removes the design and cannot be undone.\n\nTip: use the Backup button first if you want a saved copy.`)) return;
-              if (!window.confirm(`Are you absolutely sure? Design ${sel.designNo} will be gone for good.`)) return;
+              const dn = String(sel.designNo);
+              const relChallans = (challans||[]).filter(c => challanDesigns(c).includes(dn));
+              const relBills = (bills||[]).filter(b => String(b.designNo)===dn || (b.lines||[]).some(l=>String(l.designNo)===dn));
+              if (!window.confirm(`Delete design ${sel.designNo}?\n\nThis will ALSO permanently delete everything linked to it:\n- ${relChallans.length} challan(s)\n- ${relBills.length} bill(s)\n- all its movements & cost-sheet entries\n\nCannot be undone. Use Backup first if unsure.`)) return;
+              if (!window.confirm(`Are you absolutely sure? Design ${sel.designNo} and all its linked records will be gone for good.`)) return;
+              for (const c of relChallans) {
+                const otherDesigns = challanDesigns(c).filter(x => x!==dn);
+                if (otherDesigns.length>0 && (c.lines||[]).length) {
+                  const keptLines = c.lines.filter(l => String(l.designNo)!==dn);
+                  const u = { ...c, lines:keptLines, qty:keptLines.reduce((a,l)=>a+(+l.qty||0),0), amount:keptLines.reduce((a,l)=>a+(+l.amount||0),0) };
+                  await dbUpsert("challans", challanToRow(u));
+                  setChallans(p => p.map(x=>x.id===c.id?u:x));
+                } else {
+                  await dbDelete("challans", c.id);
+                  setChallans(p => p.filter(x=>x.id!==c.id));
+                }
+              }
+              for (const b of relBills) {
+                const keptLines = (b.lines||[]).filter(l => String(l.designNo)!==dn);
+                if (String(b.designNo)===dn || keptLines.length===0) {
+                  await dbDelete("bills", b.id);
+                  setBills(p => p.filter(x=>x.id!==b.id));
+                } else {
+                  const u = { ...b, lines:keptLines, gross:keptLines.reduce((a,l)=>a+(+l.amount||0),0) };
+                  await dbUpsert("bills", billToRow(u));
+                  setBills(p => p.map(x=>x.id===b.id?u:x));
+                }
+              }
               await dbDelete("designs", sel.id);
               setDesigns(p => p.filter(x => x.id!==sel.id));
-              recordActivity(currentUser, "Deleted design", `Design ${sel.designNo}`, "permanent");
-              showToast("Design deleted");
+              recordActivity(currentUser, "Deleted design + linked records", `Design ${sel.designNo}`, `${relChallans.length} challans, ${relBills.length} bills removed`);
+              showToast("Design and all linked records deleted");
               setSel(null);
             }} color={T.red+"22"} textColor={T.red} small style={{ border:`1px solid ${T.red}55` }} />}
             <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
