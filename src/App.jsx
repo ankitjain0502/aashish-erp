@@ -3674,6 +3674,12 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
         for (const dn of (c.newDesignNos||[])) {
           if (!designs.some(d => String(d.designNo)===String(dn))) {
             const nd = makePlaceholderDesign({ ...c, designNo:dn }, currentUser);
+            const fd = (c.newDesignData||{})[dn];
+            if (fd) {
+              if (fd.supplier) nd.supplier = fd.supplier;
+              if ((fd.photos||[]).length) nd.photos = fd.photos.map((src,i)=>({ src, desc:`swatch ${i+1}` }));
+              if (fd.meters) nd.colors = [{ id:`C${Date.now()}`, name:"", meters:String(fd.meters), metersHalf:"", sizes:{}, sizesHalf:{}, sampleFabric:[], shrinkage:"", sampleShrinkage:"" }];
+            }
             await dbUpsert("designs", dToRow(nd));
             setDesigns(p => [nd, ...p]);
             recordActivity(currentUser, "Created placeholder design (via challan)", `Design ${dn}`, "needs completion");
@@ -4000,13 +4006,17 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
       return { designNo:String(ln.designNo).trim(), process:ln.process, qty:+ln.qty, rate:isHalf?0:(+ln.rate||0), amount:isHalf?0:((+ln.qty||0)*(+ln.rate||0)), halfStitch:isHalf, isSplit:!!ln.isSplit, remark:ln.remark||"", receivedFrom:ln.receivedFrom||"", sentToId:ln.sentToId||"", receivedDate:ln.receivedDate||"", sentDate:ln.sentDate||"" };
     });
     const newDesignNos = validLines.filter(ln => lineInfo(ln).isNewDesign).map(ln => String(ln.designNo).trim());
+    const newDesignData = {};
+    validLines.filter(ln => lineInfo(ln).isNewDesign).forEach(ln => {
+      newDesignData[String(ln.designNo).trim()] = { meters:ln.fabMeters||"", supplier:ln.fabSupplier||"", photos:ln.fabPhotos||[] };
+    });
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
     const allHalf = builtLines.every(l => l.halfStitch);
     onSave({
       id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct: allHalf?0:(+head.gstPct||0), halfStitch: allHalf,
       lines:builtLines, designNo:first.designNo, process:first.process, qty:builtLines.reduce((a,l)=>a+l.qty,0), rate:first.rate, amount:builtLines.reduce((a,l)=>a+l.amount,0),
-      isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos
+      isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos, newDesignData
     });
   }
 
@@ -4130,6 +4140,26 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               </div>}
               {lines.length>1 && <Btn label="✕" onClick={() => removeLine(ln.id)} color={T.red+"22"} textColor={T.red} small />}
             </div>
+            {/* Fabric details for a NEW design created via challan */}
+            {ln.newDesign && ln.designNo.trim() && (
+              <div style={{ background:T.accent+"0D", border:`1px solid ${T.accent}44`, borderRadius:8, padding:10, marginTop:8 }}>
+                <div style={{ fontFamily:T.mono, fontSize:9, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:8 }}>New design — add fabric details (admin can complete rest later)</div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+                  <Inp label="Total Meters" type="number" value={ln.fabMeters||""} onChange={v => updLine(ln.id,"fabMeters",v)} />
+                  <Inp label="Fabric Supplier (name)" value={ln.fabSupplier||""} onChange={v => updLine(ln.id,"fabSupplier",v)} />
+                </div>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:6 }}>Swatch Photos</label>
+                <button onClick={() => { const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.multiple=true; inp.capture="environment"; inp.onchange=(e)=>{ Array.from(e.target.files||[]).forEach(f=>compressImage(f).then(src=>updLine(ln.id,"fabPhotos",[...(ln.fabPhotos||[]),src])).catch(()=>{})); }; inp.click(); }} style={{ background:T.surface, border:`1px solid ${T.accent}66`, color:T.accent, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>📷 Add Swatch Photo(s)</button>
+                {(ln.fabPhotos||[]).length>0 && <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
+                  {(ln.fabPhotos||[]).map((src,pi)=>(
+                    <div key={pi} style={{ position:"relative" }}>
+                      <img src={src} alt="" style={{ width:50, height:50, borderRadius:5, objectFit:"cover", border:`1px solid ${T.border}` }} />
+                      <button onClick={()=>updLine(ln.id,"fabPhotos",(ln.fabPhotos||[]).filter((_,x)=>x!==pi))} style={{ position:"absolute", top:-5, right:-5, background:T.red, color:"#fff", border:"none", borderRadius:"50%", width:16, height:16, fontSize:10, cursor:"pointer", lineHeight:1 }}>×</button>
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            )}
             {/* Per-design received/sent tracking */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginTop:8 }}>
               <Inp label="Received From" value={ln.receivedFrom||""} onChange={v => updLine(ln.id,"receivedFrom",v)} placeholder="who sent it" />
@@ -4959,6 +4989,12 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         for (const dn of (c.newDesignNos||[])) {
           if (!designs.some(d => String(d.designNo)===String(dn))) {
             const nd = makePlaceholderDesign({ ...c, designNo:dn }, user.name);
+            const fd = (c.newDesignData||{})[dn];
+            if (fd) {
+              if (fd.supplier) nd.supplier = fd.supplier;
+              if ((fd.photos||[]).length) nd.photos = fd.photos.map((src,i)=>({ src, desc:`swatch ${i+1}` }));
+              if (fd.meters) nd.colors = [{ id:`C${Date.now()}`, name:"", meters:String(fd.meters), metersHalf:"", sizes:{}, sizesHalf:{}, sampleFabric:[], shrinkage:"", sampleShrinkage:"" }];
+            }
             await dbUpsert("designs", dToRow(nd));
             setDesigns(p => [nd, ...p]);
             recordNotification(user.name, `New placeholder design ${dn} created via challan by ${user.name} — complete its details`, nd.id);
