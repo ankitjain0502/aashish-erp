@@ -66,6 +66,49 @@ async function dbDelete(table, id) {
   catch(e) { console.error(e); }
 }
 
+// ── Section Lock system ───────────────────────────────────────────────────────
+function lockRow(l) { return { id:l.id, locked:!!l.locked, req_pending:!!l.reqPending, req_by:l.reqBy||"", code:l.code||"", code_active:!!l.codeActive }; }
+function getLock(locks, id) { return (locks||[]).find(l => l.id===id) || { id, locked:false, reqPending:false, reqBy:"", code:"", codeActive:false }; }
+function lockLabel(id) {
+  if (id==="fabric_bills") return "Fabric Bills";
+  if (id && id.startsWith("fabric_bills_")) return `Fabric Bills — Design ${id.replace("fabric_bills_","")}`;
+  return id;
+}
+async function saveLock(setLocks, l) {
+  setLocks(prev => { const ex = prev.some(x=>x.id===l.id); return ex ? prev.map(x=>x.id===l.id?l:x) : [...prev, l]; });
+  await dbUpsert("locks", lockRow(l), true);
+}
+// Lock toggle button + unlock-request + code-entry, all in one component
+function LockControl({ sectionId, label, locks, setLocks, currentUser, role }) {
+  const l = getLock(locks, sectionId);
+  const [codeInput, setCodeInput] = useState("");
+  const [showEntry, setShowEntry] = useState(false);
+  if (!l.locked) {
+    return <button onClick={()=>saveLock(setLocks, { ...l, id:sectionId, locked:true, reqPending:false, code:"", codeActive:false })} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.steelLt, borderRadius:6, padding:"5px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }} title={`Lock ${label}`}>🔓 Lock {label}</button>;
+  }
+  // locked:
+  return (
+    <div style={{ display:"inline-flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+      <span style={{ background:T.red+"18", border:`1px solid ${T.red}`, color:T.red, borderRadius:6, padding:"5px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700 }}>🔒 {label} LOCKED</span>
+      {!l.reqPending && !showEntry && <button onClick={async()=>{ await saveLock(setLocks, { ...l, id:sectionId, reqPending:true, reqBy:currentUser||"user" }); setShowEntry(true); }} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:6, padding:"5px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>Request unlock</button>}
+      {(l.reqPending || showEntry) && (
+        <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+          {l.codeActive
+            ? <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>Admin generated a code — enter it:</span>
+            : <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>Waiting for admin to generate code on Home…</span>}
+          <input value={codeInput} onChange={e=>setCodeInput(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="4-digit" style={{ width:70, background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"5px 8px", textAlign:"center" }} />
+          <button onClick={async()=>{
+            if (l.codeActive && codeInput && codeInput===l.code) {
+              await saveLock(setLocks, { id:sectionId, locked:false, reqPending:false, reqBy:"", code:"", codeActive:false });
+              setShowEntry(false); setCodeInput("");
+            } else { alert("Wrong or not-yet-generated code. Ask admin to generate it on Home."); }
+          }} style={{ background:T.green, color:"#fff", border:"none", borderRadius:6, padding:"5px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>Unlock</button>
+        </span>
+      )}
+    </div>
+  );
+}
+
 const T = {
   bg: "#F7F4FB", surface: "#FFFFFF", card: "#FCFAFF", border: "#E6DCF2",
   gold: "#B8860B", steel: "#8B6FB0", steelLt: "#A98FC9",
@@ -1174,11 +1217,13 @@ function ReferencePhotos({ design, onUpdate, role }) {
 }
 
 // ── Supplier Bills ────────────────────────────────────────────────────────────
-function SupplierBills({ design, onUpdate, role, allSuppliers = [] }) {
-  const canEdit = role === "admin" || role === "team";
+function SupplierBills({ design, onUpdate, role, allSuppliers = [], locks = [], setLocks, currentUser }) {
+  const sectionId = "fabric_bills";
+  const isLocked = getLock(locks, sectionId).locked;
+  const canEdit = (role === "admin" || role === "team") && !isLocked;
   const [lightbox, setLightbox] = useState(null);
   const bills = design.supplierBills || [];
-  function updBill(id,k,v){ onUpdate({ ...design, supplierBills:bills.map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; }) }); }
+  function updBill(id,k,v){ if(!canEdit) return; onUpdate({ ...design, supplierBills:bills.map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; }) }); }
   function addBill(){ onUpdate({ ...design, supplierBills:[...bills, { id:`B${Date.now()}`, designNo:design.designNo, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", transporter:"", transportCost:"", qty:"", rate:"", amount:"", gstRate:"", gstType:"CGST+SGST", roundOff:"", photo:"" }] }); }
   function removeBill(id){ if(!window.confirm("Delete this bill?")) return; onUpdate({ ...design, supplierBills:bills.filter(b => b.id!==id) }); }
   function billPhoto(id,file){ if(!file) return; compressImage(file).then(src => updBill(id,"photo",src)).catch(()=>{}); }
@@ -1186,6 +1231,8 @@ function SupplierBills({ design, onUpdate, role, allSuppliers = [] }) {
   const totalQty = bills.reduce((a,b) => a+(+b.qty||0), 0);
   return (
     <div>
+      {setLocks && <div style={{ marginBottom:12, display:"flex", justifyContent:"flex-end" }}><LockControl sectionId={sectionId} label="Fabric Bills" locks={locks} setLocks={setLocks} currentUser={currentUser} role={role} /></div>}
+      {isLocked && <div style={{ background:T.red+"11", border:`1px solid ${T.red}44`, borderRadius:8, padding:"8px 12px", marginBottom:12, fontFamily:T.mono, fontSize:10, color:T.red }}>🔒 This section is locked. Editing is disabled. Use "Request unlock" above to get a code from admin.</div>}
       {bills.map(b => (
         <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:12, border:`1px solid ${b.billNo && b.billNo.trim() ? T.green : T.orange}`, display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
           <FabricBillPhoto bill={b} onPick={file => billPhoto(b.id, file)} />
@@ -1361,11 +1408,24 @@ function CustomerOrders({ design, onUpdate, role }) {
 }
 
 // ── Process Register (with code generation) ───────────────────────────────────
-function ProcessRegister({ design, jobbers, onUpdate, role }) {
+function ProcessRegister({ design, jobbers, challans = [], onUpdate, role }) {
   const isAdmin = role === "admin";
   const [showRate, setShowRate] = useState(true);
   const totalPcs = (design.colors||[]).reduce((a,c) => a+Object.values(c.sizes||{}).reduce((x,v) => x+(+v||0), 0), 0);
   const procs = design.processes || {};
+  // Derive jobber + recd/sent dates per process from challans (linked, auto-fill)
+  const fromChallan = {}; // process -> { jobberId, recdDate, sentDate, jobberName }
+  (challans||[]).forEach(c => {
+    if (c.status==="rejected") return;
+    const lns = (c.lines && c.lines.length) ? c.lines : [{ designNo:c.designNo, process:c.process, qty:c.qty, receivedFrom:c.receivedFrom, sentToId:c.sendToId, receivedDate:c.receivedDate, sentDate:c.sentDate }];
+    lns.forEach(l => {
+      if (String(l.designNo)!==String(design.designNo)) return;
+      const proc = PROCESSES.find(p => (l.process||"").toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes((l.process||"").toLowerCase()));
+      if (!proc || !l.process) return;
+      // the jobber who DID this process is the challan's jobber
+      fromChallan[proc] = { jobberId:c.jobberId, recdDate:l.receivedDate||c.receivedDate||"", sentDate:l.sentDate||c.sentDate||"", jobberName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||"" };
+    });
+  });
   const headers = ["Process","Jobber",...(isAdmin?["Rate/pc","Code","Recd Date","Dlvd Date","Days"]:[]),"Status"];
   return (
     <div style={{ overflowX:"auto" }}>
@@ -1387,9 +1447,14 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
         <tbody>
           {PROCESSES.map((p,i) => {
             const proc = procs[p] || {};
+            const auto = fromChallan[p] || {};
             const splits = proc.splits || [];
-            const jobber = jobbers.find(j => j.id===proc.jobber);
+            const effJobberId = proc.jobber || auto.jobberId || "";
+            const jobber = jobbers.find(j => j.id===effJobberId);
             const jName = jobber?.name || "—";
+            const linkedFromChallan = !proc.jobber && !!auto.jobberId;
+            const effRecd = proc.recdDate || auto.recdDate || "";
+            const effDlvd = proc.dlvdDate || auto.sentDate || "";
             const prefix = proc.prefix || codeForProcess(jobber, p);
             const code = buildCode(prefix, proc.rate);
             return (
@@ -1402,8 +1467,8 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
                   </td>
                   <td style={{ padding:"4px 6px", minWidth:160 }}>
                     {isAdmin
-                      ? <select value={proc.jobber||""} onChange={e => onUpdate(p,"jobber",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11, width:"100%" }}>
-                          <option value="">— select —</option>
+                      ? <><select value={proc.jobber||""} onChange={e => onUpdate(p,"jobber",e.target.value)} style={{ background:T.bg, border:`1px solid ${linkedFromChallan?T.green:T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11, width:"100%" }}>
+                          <option value="">{linkedFromChallan?`↳ ${auto.jobberName} (from challan)`:"— select —"}</option>
                           <optgroup label={`Does ${p}`}>
                             {jobbers.filter(j => jobberDoesProcess(j,p)).map(j => <option key={j.id} value={j.id}>{j.name} ({codeForProcess(j,p)})</option>)}
                           </optgroup>
@@ -1411,6 +1476,7 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
                             {jobbers.filter(j => !jobberDoesProcess(j,p)).map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
                           </optgroup>
                         </select>
+                        {linkedFromChallan && <div style={{ fontFamily:T.mono, fontSize:8, color:T.green, marginTop:2 }}>auto from challan · editable</div>}</>
                       : <span style={{ color:T.text, padding:"8px 10px", display:"block" }}>{jName}</span>
                     }
                   </td>
@@ -1418,9 +1484,9 @@ function ProcessRegister({ design, jobbers, onUpdate, role }) {
                     <>
                       <td style={{ padding:"4px 6px" }}>{showRate ? <input type="number" value={proc.rate||""} onChange={e => onUpdate(p,"rate",e.target.value)} placeholder="0" style={{ background:T.bg, border:`1px solid ${T.border}`, color:T.gold, borderRadius:4, padding:"4px 6px", fontSize:11, width:60, fontFamily:T.mono }} /> : <span style={{ color:T.textDim, fontFamily:T.mono }}>••••</span>}</td>
                       <td style={{ padding:"8px 10px", fontFamily:T.mono, color:T.gold, fontWeight:700 }}>{showRate ? (code||"—") : "••••"}</td>
-                      <td style={{ padding:"4px 6px" }}><input type="date" value={proc.recdDate||""} onChange={e => onUpdate(p,"recdDate",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11 }} /></td>
-                      <td style={{ padding:"4px 6px" }}><input type="date" value={proc.dlvdDate||""} onChange={e => onUpdate(p,"dlvdDate",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11 }} /></td>
-                      <td style={{ padding:"8px 10px", fontFamily:T.mono, color:T.steelLt }}>{daysBetween(proc.recdDate, proc.dlvdDate) ?? "—"}</td>
+                      <td style={{ padding:"4px 6px" }}><input type="date" value={proc.recdDate||auto.recdDate||""} onChange={e => onUpdate(p,"recdDate",e.target.value)} style={{ background:T.bg, border:`1px solid ${(!proc.recdDate&&auto.recdDate)?T.green:T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11 }} /></td>
+                      <td style={{ padding:"4px 6px" }}><input type="date" value={proc.dlvdDate||auto.sentDate||""} onChange={e => onUpdate(p,"dlvdDate",e.target.value)} style={{ background:T.bg, border:`1px solid ${(!proc.dlvdDate&&auto.sentDate)?T.green:T.border}`, color:T.text, borderRadius:4, padding:"4px 6px", fontSize:11 }} /></td>
+                      <td style={{ padding:"8px 10px", fontFamily:T.mono, color:T.steelLt }}>{daysBetween(effRecd, effDlvd) ?? "—"}</td>
                     </>
                   )}
                   <td style={{ padding:"8px 10px" }}>{proc.jobber ? <Badge label="Assigned" color={T.gold} /> : <Badge label="Pending" color={T.steel} />}</td>
@@ -2106,7 +2172,7 @@ function ProductionFlow({ design, jobbers }) {
 }
 
 // ── Design Detail (tabbed) ────────────────────────────────────────────────────
-function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people, challans = [] }) {
+function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people, challans = [], locks = [], setLocks }) {
   const isAdmin = role === "admin";
   const isTeam = role === "team";
   const isJobber = role === "jobber";
@@ -2224,8 +2290,8 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       {dt==="Customer Orders" && <Section title="Customer Orders"><CustomerOrders design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Photos" && <Section title="Reference Photos & Shirt Details"><ReferencePhotos design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
-      {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} allSuppliers={(design.supplierBills||[]).map(b=>b.supplier).filter(Boolean)} /></Section>}
-      {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-proc" title={`Process Register ${design.designNo}`} />}><div id="rpt-proc"><ProcessRegister design={design} jobbers={jobbers} onUpdate={updProcess} role={role} /></div></Section>}
+      {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} allSuppliers={(design.supplierBills||[]).map(b=>b.supplier).filter(Boolean)} locks={locks} setLocks={setLocks} currentUser={currentUser} /></Section>}
+      {dt==="Process Register" && isAdmin && <Section title="Process Register & Cost Code" action={<PdfBtn targetId="rpt-proc" title={`Process Register ${design.designNo}`} />}><div id="rpt-proc"><ProcessRegister design={design} jobbers={jobbers} challans={challans} onUpdate={updProcess} role={role} /></div></Section>}
       {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} challans={challans} /></div></Section>}
       {dt==="MRP" && isAdmin && <Section title="MRP & Product Codes"><MRPPanel design={design} onUpdate={save} /></Section>}
       {dt==="Barcode" && isAdmin && <Section title="Barcode Generator"><BarcodePanel design={design} jobbers={jobbers} onUpdate={save} /></Section>}
@@ -3423,16 +3489,44 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
     recordActivity(currentUser, "Approved challan", `Designs ${challanDesigns(c).join(", ")}`, `${jname(c.jobberId)} · ${challanQty(c)} pcs`);
     showToast("Challan approved ✓");
   }
+  async function removeChallanMovements(c) {
+    // remove movements created by this challan (matched by challan number in remark) from all designs
+    const chNo = c.challanNo||"";
+    const dns = new Set(challanDesigns(c).map(String));
+    for (const d of designs) {
+      if (!(d.movements||[]).length) continue;
+      const touches = (d.movements||[]).some(m => (chNo && (m.remark||"").includes(`Challan ${chNo}`)) );
+      const designInChallan = dns.has(String(d.designNo));
+      if (!touches && !designInChallan) continue;
+      const kept = (d.movements||[]).filter(m => !(chNo && (m.remark||"").includes(`Challan ${chNo}`)));
+      if (kept.length !== (d.movements||[]).length) {
+        const u = { ...d, movements:kept };
+        setDesigns(p => p.map(x => x.id===u.id?u:x));
+        await dbUpsert("designs", dToRow(u));
+      }
+    }
+  }
   async function reject(c) {
     const u = { ...c, status:"rejected" };
     await dbUpsert("challans", challanToRow(u));
     setChallans(p => p.map(x => x.id===c.id?u:x));
-    showToast("Challan rejected");
+    await removeChallanMovements(c);
+    showToast("Challan rejected — movements removed");
   }
   async function remove(c) {
+    if (!window.confirm(`Delete challan ${c.challanNo||""}? This also removes its movements from the flow. Cannot be undone.`)) return;
     await dbDelete("challans", c.id);
     setChallans(p => p.filter(x => x.id!==c.id));
-    showToast("Challan deleted");
+    await removeChallanMovements(c);
+    showToast("Challan deleted — movements removed");
+  }
+  const [editChallan, setEditChallan] = useState(null);
+  async function saveEditedChallan(updated) {
+    await dbUpsert("challans", challanToRow(updated));
+    setChallans(p => p.map(x => x.id===updated.id?updated:x));
+    recordActivity(currentUser, "Edited challan", `Designs ${challanDesigns(updated).join(", ")}`, `${challanQty(updated)} pcs`);
+    showToast("Challan updated ✓");
+    setEditChallan(null);
   }
 
   const pendingCount = challans.filter(c => c.status==="pending").length;
@@ -3521,7 +3615,9 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
                 </td>
                 <td style={{ padding:"8px", whiteSpace:"nowrap", verticalAlign:"top" }}>
                   {isAdmin && c.status==="pending" && <><Btn label="✓" onClick={()=>approve(c)} color={T.green} textColor="#fff" small /> <Btn label="✕" onClick={()=>reject(c)} color={T.red+"22"} textColor={T.red} small /></>}
+                  {isAdmin && !c.billed && <Btn label="✎" onClick={()=>setEditChallan(c)} color={T.gold+"22"} textColor={T.gold} small />}
                   {isAdmin && c.status!=="pending" && !c.billed && <Btn label="Del" onClick={()=>remove(c)} color={T.red+"22"} textColor={T.red} small />}
+                  {c.billed && <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>locked (billed)</span>}
                 </td>
               </tr>
             );})}
@@ -3565,7 +3661,46 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
         showToast("Challan saved ✓");
         setShowForm(false);
       }} />}
+      {editChallan && <EditChallanModal challan={editChallan} jobbers={jobbers} onClose={()=>setEditChallan(null)} onSave={saveEditedChallan} />}
     </div>
+  );
+}
+
+function EditChallanModal({ challan, jobbers, onClose, onSave }) {
+  const [date, setDate] = useState(challan.date||"");
+  const [challanNo, setChallanNo] = useState(challan.challanNo||"");
+  const [gstPct, setGstPct] = useState(String(challan.gstPct||""));
+  const [lines, setLines] = useState((challan.lines && challan.lines.length ? challan.lines : [{ designNo:challan.designNo, process:challan.process, qty:challan.qty, rate:challan.rate, amount:challan.amount }]).map(l => ({ ...l })));
+  function updLine(i,k,v){ setLines(p => p.map((l,idx)=>{ if(idx!==i) return l; const nl={...l,[k]:v}; if(k==="qty"||k==="rate") nl.amount=((+nl.qty||0)*(+nl.rate||0)); return nl; })); }
+  const total = lines.reduce((a,l)=>a+(+l.amount||0),0);
+  function doSave(){
+    const builtLines = lines.map(l => ({ ...l, qty:+l.qty||0, rate:+l.rate||0, amount:(+l.qty||0)*(+l.rate||0) }));
+    onSave({ ...challan, date, challanNo, gstPct:challan.halfStitch?0:(+gstPct||0), lines:builtLines, qty:builtLines.reduce((a,l)=>a+l.qty,0), amount:builtLines.reduce((a,l)=>a+l.amount,0) });
+  }
+  return (
+    <Modal title={`Edit Challan ${challan.challanNo||""}`} onClose={onClose}>
+      {challan.halfStitch && <div style={{ background:T.orange+"22", border:`1px solid ${T.orange}`, borderRadius:6, padding:"8px 12px", marginBottom:12, fontFamily:T.mono, fontSize:10, color:T.orange }}>Half-stitch challan — no rate/amount (movement only).</div>}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+        <Inp label="Challan No" value={challanNo} onChange={setChallanNo} />
+        <Inp label="Date" type="date" value={date} onChange={setDate} />
+        {!challan.halfStitch && <Inp label="GST %" value={gstPct} onChange={setGstPct} options={["","5","12","18"]} />}
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Design lines</div>
+      {lines.map((l,i)=>(
+        <div key={i} style={{ display:"grid", gridTemplateColumns:challan.halfStitch?"1fr 1fr 1fr":"1fr 1fr 80px 80px 90px", gap:8, marginBottom:8, alignItems:"end" }}>
+          <Inp label="Design" value={l.designNo} onChange={v=>updLine(i,"designNo",v)} />
+          <Inp label="Process" value={l.process} onChange={v=>updLine(i,"process",v)} />
+          <Inp label="Qty" type="number" value={l.qty} onChange={v=>updLine(i,"qty",v)} />
+          {!challan.halfStitch && <Inp label="Rate" type="number" value={l.rate} onChange={v=>updLine(i,"rate",v)} />}
+          {!challan.halfStitch && <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700, paddingBottom:8 }}>Rs.{(+l.amount||0)}</div>}
+        </div>
+      ))}
+      {!challan.halfStitch && <div style={{ textAlign:"right", fontFamily:T.mono, fontSize:14, color:T.gold, fontWeight:900, marginBottom:14 }}>Total: Rs.{(total + total*(+gstPct||0)/100).toFixed(2)}{+gstPct>0?` (incl ${gstPct}% GST)`:""}</div>}
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Changes" onClick={doSave} color={T.gold} textColor={T.bg} />
+      </div>
+    </Modal>
   );
 }
 
@@ -3706,7 +3841,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
     onSave({
-      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct:head.halfStitch?0:(+head.gstPct||0), halfStitch:!!head.halfStitch,
+      id:`CH${Date.now()}`, jobberId:head.jobberId, date:head.date, challanNo:head.challanNo, photo:head.photo, sendToId:head.sendToId, gstPct:(head.halfStitch && lines.some(l=>(l.process||"").toLowerCase().includes("stitch")))?0:(+head.gstPct||0), halfStitch:!!(head.halfStitch && lines.some(l=>(l.process||"").toLowerCase().includes("stitch"))),
       lines:builtLines, designNo:first.designNo, process:first.process, qty:builtLines.reduce((a,l)=>a+l.qty,0), rate:first.rate, amount:builtLines.reduce((a,l)=>a+l.amount,0),
       isSplit: builtLines.some(l=>l.isSplit), status:"approved", billed:false, createdBy:currentUser, createdAtStr:nowStr(), newDesignNos
     });
@@ -3733,12 +3868,19 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
         <Inp label="Date" type="date" value={head.date} onChange={updHead("date")} />
       </div>
 
-      {/* Half Stitch toggle — movement only, no money, not in cost sheet */}
-      <label style={{ display:"flex", alignItems:"center", gap:10, background:head.halfStitch?T.orange+"22":T.surface, border:`1px solid ${head.halfStitch?T.orange:T.border}`, borderRadius:8, padding:"10px 14px", marginBottom:14, cursor:"pointer" }}>
-        <input type="checkbox" checked={head.halfStitch} onChange={e=>updHead("halfStitch")(e.target.checked)} style={{ width:18, height:18, accentColor:T.orange }} />
-        <span style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>Half Stitch challan</span>
-        <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>(movement only — no rate/amount/GST, not in cost sheet)</span>
-      </label>
+      {/* Half / Full Stitch choice — only for STITCH process */}
+      {lines.some(l => (l.process||"").toLowerCase().includes("stitch")) && (
+      <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+        <button onClick={()=>updHead("halfStitch")(true)} style={{ flex:1, minWidth:160, background:head.halfStitch?T.orange+"22":T.surface, border:`2px solid ${head.halfStitch?T.orange:T.border}`, borderRadius:8, padding:"12px 14px", cursor:"pointer", textAlign:"left" }}>
+          <div style={{ fontFamily:T.sans, fontSize:13, color:head.halfStitch?T.orange:T.text, fontWeight:700 }}>◐ Half Stitch</div>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, marginTop:2 }}>movement only — no rate/amount, not in cost sheet</div>
+        </button>
+        <button onClick={()=>updHead("halfStitch")(false)} style={{ flex:1, minWidth:160, background:!head.halfStitch?T.green+"22":T.surface, border:`2px solid ${!head.halfStitch?T.green:T.border}`, borderRadius:8, padding:"12px 14px", cursor:"pointer", textAlign:"left" }}>
+          <div style={{ fontFamily:T.sans, fontSize:13, color:!head.halfStitch?T.green:T.text, fontWeight:700 }}>● Full Stitch</div>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, marginTop:2 }}>with rate/amount — counts in cost sheet</div>
+        </button>
+      </div>
+      )}
 
       {/* Design lines */}
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8, letterSpacing:1 }}>Designs in this challan — each can have its own sender/receiver</div>
@@ -4412,7 +4554,7 @@ function JobberLedger({ designs, jobbers }) {
 }
 
 // ── Jobber Panel ──────────────────────────────────────────────────────────────
-function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, notifications, setNotifications, onLogout }) {
+function JobberPanel({ user, designs, setDesigns, people, challans, setChallans, payments, setPayments, notifications, setNotifications, locks, setLocks, onLogout }) {
   const [sel, setSel] = useState(null);
   const [showChallan, setShowChallan] = useState(false);
   const [lang, setLang] = useState("en");
@@ -4450,7 +4592,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           </div>
         </div>
         <div style={{ maxWidth:1100, margin:"0 auto", padding:24 }}>
-          <DesignDetail design={sel} jobbers={people} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role="jobber" currentUser={user.name} currentJobber={user} L={L} onSendLot={sendLot} people={people} challans={challans} />
+          <DesignDetail design={sel} jobbers={people} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role="jobber" currentUser={user.name} currentJobber={user} L={L} onSendLot={sendLot} people={people} challans={challans} locks={locks} setLocks={setLocks} />
         </div>
         <Toast {...toast} />
       </div>
@@ -5138,7 +5280,7 @@ ${vouchers}
           </div>
         </div>
         <div style={{ maxWidth:1100, margin:"0 auto", padding:24 }}>
-          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} challans={challans} />
+          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} challans={challans} locks={locks} setLocks={setLocks} />
         </div>
         <Toast {...toast} />
       </div>
@@ -5171,6 +5313,25 @@ ${vouchers}
         {tab==="Home" && (
           <>
           <Dashboard designs={designs} bookings={bookings} bills={bills} payments={payments} people={people} lateDesigns={lateDesigns} isAdmin={isAdmin} onGo={(dest) => { if (dest==="__new__") setCreating(true); else setTab(dest); }} />
+          {isAdmin && (() => {
+            const pendingReqs = (locks||[]).filter(l => l.locked && l.reqPending);
+            if (!pendingReqs.length) return null;
+            return (
+              <div style={{ background:T.orange+"11", borderRadius:10, padding:16, marginTop:16, border:`1px solid ${T.orange}` }}>
+                <div style={{ fontFamily:T.mono, fontSize:12, color:T.orange, textTransform:"uppercase", fontWeight:700, marginBottom:10 }}>🔓 Unlock Requests ({pendingReqs.length})</div>
+                {pendingReqs.map(l => (
+                  <div key={l.id} style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap", padding:"8px 0", borderBottom:`1px solid ${T.border}` }}>
+                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>{lockLabel(l.id)}</span>
+                    <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>requested by {l.reqBy||"user"}</span>
+                    {l.codeActive
+                      ? <span style={{ fontFamily:T.mono, fontSize:14, color:T.textDim, fontWeight:900, letterSpacing:3, background:T.surface, padding:"4px 14px", borderRadius:6, border:`1px dashed ${T.border}` }}>{l.code} <span style={{ fontSize:8 }}>(tell user — used once)</span></span>
+                      : <button onClick={async()=>{ const code=String(Math.floor(1000+Math.random()*9000)); await saveLock(setLocks, { ...l, code, codeActive:true }); }} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:6, padding:"6px 14px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Generate Code</button>}
+                    <button onClick={async()=>{ await saveLock(setLocks, { ...l, reqPending:false, code:"", codeActive:false }); }} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.steelLt, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:10, cursor:"pointer" }}>Dismiss</button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
           {isAdmin && (
             <div style={{ background:T.card, borderRadius:10, padding:16, marginTop:16, border:`1px solid ${T.border}` }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
@@ -5408,6 +5569,7 @@ export default function App() {
   const [activityLog, setActivityLog] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [challans, setChallans] = useState([]);
+  const [locks, setLocks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadInfo, setLoadInfo] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -5432,6 +5594,8 @@ export default function App() {
       setNotifications((notifRows||[]).map(rowToNotif).sort((a,b)=> (b.ts||"").localeCompare(a.ts||"")));
       setChallans((chRows||[]).map(rowToChallan));
       setCreditNotes((cnRows||[]).map(rowToCn));
+      const lockRows = await dbSelect("locks");
+      setLocks((lockRows||[]).map(r => ({ id:r.id, locked:!!r.locked, reqPending:!!r.req_pending, reqBy:r.req_by||"", code:r.code||"", codeActive:!!r.code_active })));
       setLoadInfo(`Loaded ${ppl.length} people, ${(dRows||[]).length} designs`);
     } catch(e) {
       setLoadInfo("Load error: " + (e?.message||e));
@@ -5458,7 +5622,7 @@ export default function App() {
   ) : null;
 
   if (auth.role === "jobber") {
-    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} notifications={notifications} setNotifications={setNotifications} onLogout={() => setAuth(null)} /></>;
+    return <>{errorBanner}<JobberPanel user={auth.user} designs={designs} setDesigns={setDesigns} people={people} challans={challans} setChallans={setChallans} payments={payments} setPayments={setPayments} notifications={notifications} setNotifications={setNotifications} locks={locks} setLocks={setLocks} onLogout={() => setAuth(null)} /></>;
   }
   return (
     <>
