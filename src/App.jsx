@@ -473,6 +473,11 @@ function Loader() {
 }
 
 function Modal({ title, onClose, children }) {
+  // While any modal/form is open, pause the background auto-refresh so typing isn't disturbed.
+  useEffect(() => {
+    window.__erpModalsOpen = (window.__erpModalsOpen || 0) + 1;
+    return () => { window.__erpModalsOpen = Math.max(0, (window.__erpModalsOpen || 1) - 1); };
+  }, []);
   return (
     <div style={{ position:"fixed", inset:0, background:"#000A", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={onClose}>
       <div style={{ background:T.card, borderRadius:12, border:`1px solid ${T.border}`, width:"min(640px,98vw)", maxHeight:"92vh", overflow:"auto", boxShadow:"0 8px 40px #0009" }} onClick={e => e.stopPropagation()}>
@@ -4583,8 +4588,6 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
               </div>
             );
           })()}
-            );
-          })()}
 
           <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
             {[["account","Account (auto)"],["bank","Bank (GST)"],["combined","Combined"],["cash","Cash"]].map(([v,lbl]) => (
@@ -5081,7 +5084,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           <div style={{ fontSize:11, color:T.steelLt }}>Logged in: <span style={{ color:T.white }}>{user.name}</span> <Badge label="JOBBER" color={T.gold} /></div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <NotificationBell notifications={notifications} currentUser={user.name} userId={user.id} onOpenDesign={(id)=>{ const d=designs.find(x=>x.id===id); if(d) setSel(d); }} onMarkRead={async (n)=>{ const updated={...n, readBy:[...(n.readBy||[]), user.name]}; await dbUpsert("notifications", notifToRow(updated), true); setNotifications(p=>p.map(x=>x.id===n.id?updated:x)); }} />
+          <NotificationBell notifications={notifications} currentUser={user.name} userId={user.id} onOpenDesign={(n)=>{ const d=n.designId?designs.find(x=>x.id===n.designId):null; if(d) setSel(d); }} onMarkRead={async (n)=>{ setNotifications(p=>p.filter(x=>x.id!==n.id)); await dbDelete("notifications", n.id); }} />
           <LangToggle lang={lang} setLang={setLang} />
           <Btn label={L("Logout")} onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
@@ -5503,7 +5506,7 @@ function NotificationBell({ notifications, currentUser, userId, onOpenDesign, on
             {visible.slice(0,40).map(n => {
               const isUnread = !(n.readBy||[]).includes(currentUser);
               return (
-                <div key={n.id} onClick={() => { onMarkRead(n); if (n.designId) { onOpenDesign(n.designId); setOpen(false); } }} style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, cursor:"pointer", background:isUnread?T.surface:"transparent", display:"flex", gap:8, alignItems:"flex-start" }}>
+                <div key={n.id} onClick={() => { onOpenDesign(n); onMarkRead(n); setOpen(false); }} style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, cursor:"pointer", background:isUnread?T.surface:"transparent", display:"flex", gap:8, alignItems:"flex-start" }}>
                   {isUnread && <span style={{ width:8, height:8, borderRadius:"50%", background:T.gold, marginTop:5, flexShrink:0 }} />}
                   <div style={{ flex:1 }}>
                     <div style={{ color:isUnread?T.white:T.steelLt, fontSize:13, fontWeight:isUnread?600:400 }}>{n.message}</div>
@@ -5664,14 +5667,22 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
   function showToast(msg, type="success") { setToast({msg,type}); setTimeout(() => setToast({msg:"",type:""}), 3000); }
   const jobbers = people.filter(p => p.role==="jobber");
   async function markNotifRead(n) {
-    if ((n.readBy||[]).includes(currentUser)) return;
-    const updated = { ...n, readBy:[...(n.readBy||[]), currentUser] };
-    setNotifications(prev => prev.map(x => x.id===n.id ? updated : x));
-    await dbUpsert("notifications", notifToRow(updated), true);
+    // once tapped, the notification disappears
+    setNotifications(prev => prev.filter(x => x.id!==n.id));
+    await dbDelete("notifications", n.id);
   }
   function openDesignById(id) {
     const d = designs.find(x => x.id===id);
-    if (d) { setTab("Designs"); setSel(d); }
+    if (d) { setTab("Designs"); setSel(d); return; }
+  }
+  function openNotifTarget(n) {
+    // route based on the notification content/target
+    if (n.designId && designs.find(x=>x.id===n.designId)) { setTab("Designs"); setSel(designs.find(x=>x.id===n.designId)); return; }
+    const msg = (n.message||"").toLowerCase();
+    if (isAdmin && msg.includes("edit")) { setTab("Home"); return; }       // challan edit requests live on Home
+    if (msg.includes("bill")) { setTab("Bills & Ledger"); return; }
+    if (msg.includes("challan")) { setTab("Challans"); return; }
+    if (msg.includes("design")) { setTab("Designs"); return; }
   }
   const lateDesigns = designs.filter(d => d.status!=="Completed" && (ageDays(d.createdAtStr || d.dateProgram) ?? 0) > 60);
   const monthOptions = Array.from(new Set(designs.map(d => monthKey(d.createdAtStr||d.dateProgram)).filter(Boolean)));
@@ -6070,7 +6081,7 @@ ${vouchers}
           ))}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          <NotificationBell notifications={notifications} currentUser={currentUser} onOpenDesign={openDesignById} onMarkRead={markNotifRead} />
+          <NotificationBell notifications={notifications} currentUser={currentUser} onOpenDesign={openNotifTarget} onMarkRead={markNotifRead} />
           {isAdmin && <Btn label="⭳ Backup" onClick={exportBackup} color={T.accent} textColor="#fff" small />}
           {isAdmin && <Btn label="⭱ Restore" onClick={()=>restoreRef.current.click()} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}55` }} />}
           {isAdmin && <Btn label="📊 Excel" onClick={exportExcel} color={T.surface} textColor={T.green} small style={{ border:`1px solid ${T.green}55` }} />}
@@ -6408,6 +6419,21 @@ export default function App() {
     return () => { window.__erpSaveError = null; };
   }, []);
   useEffect(() => { loadAll(); }, []);
+  // auto-refresh every 20s so changes made on one device (admin/jobber) appear on others.
+  // BUT skip the refresh while a form/modal is open or an input is focused, so it never disturbs typing.
+  useEffect(() => {
+    if (!auth) return;
+    function safeRefresh() {
+      if (window.__erpModalsOpen && window.__erpModalsOpen > 0) return; // a form is open — don't refresh
+      const el = document.activeElement;
+      if (el && (el.tagName==="INPUT" || el.tagName==="TEXTAREA" || el.tagName==="SELECT" || el.isContentEditable)) return; // user is typing
+      loadAll();
+    }
+    const iv = setInterval(safeRefresh, 20000);
+    const onFocus = () => safeRefresh();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
+  }, [auth]);
   useEffect(() => { document.body.style.background = T.bg; document.body.style.margin = "0"; }, []);
 
   if (loading) return <Loader />;
