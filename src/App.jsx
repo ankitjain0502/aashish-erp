@@ -3450,6 +3450,7 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
           {form.role==="jobber" && (
             <div style={{ marginBottom:16 }}>
               <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8, marginBottom:8 }}>Area of Work — tick every task this jobber does (one card per jobber)</div>
+              {(form.processCodes||[]).some(x => (x.process||"").toLowerCase().includes("stitch")) && <div style={{ fontFamily:T.mono, fontSize:10, color:T.green, marginBottom:8 }}>✓ This jobber is a stitcher — they can create new designs.</div>}
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:8 }}>
                 {PROCESSES.filter(p => p!=="Fabric").map(pn => {
                   const checked = (form.processCodes||[]).some(x => x.process===pn);
@@ -4139,7 +4140,12 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:4, flex:"1 1 100px" }}>
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Process</label>
-                <select value={ln.process} onChange={e => updLine(ln.id,"process",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }}>
+                {ln.customProcess
+                  ? <div style={{ display:"flex", gap:4 }}>
+                      <input value={ln.process} onChange={e => updLine(ln.id,"process",e.target.value)} placeholder="type task e.g. printing" autoFocus style={{ background:T.bg, border:`1px solid ${T.accent}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
+                      <button onClick={()=>{ updLine(ln.id,"customProcess",false); updLine(ln.id,"process",""); }} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.steelLt, padding:"0 8px", cursor:"pointer", fontSize:11 }}>list</button>
+                    </div>
+                  : <select value={ln.process} onChange={e => { if(e.target.value==="__custom__"){ updLine(ln.id,"customProcess",true); updLine(ln.id,"process",""); } else { updLine(ln.id,"process",e.target.value); } }} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }}>
                   <option value="">—</option>
                   {(() => {
                     // For a jobber login, show ONLY the tasks this jobber does (with code). Admin sees all.
@@ -4151,7 +4157,8 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                       return <option key={p} value={p}>{p}{code?` (${code})`:""}</option>;
                     });
                   })()}
-                </select>
+                  <option value="__custom__">+ Other (type custom task)</option>
+                </select>}
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:4, width:70 }}>
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Qty *</label>
