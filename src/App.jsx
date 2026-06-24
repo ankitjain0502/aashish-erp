@@ -315,7 +315,7 @@ function dToRow(d) {
     ratio: d.ratio||{}, trims: d.trims||"", drawing_avg: d.drawingAvg||"", main_thumb: "", manual_avg: { ...(d.manualAvg||{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }), _formOrder: d.formOrder||[] },
     date_program: d.dateProgram||"", date_cut: d.dateCut||"",
     notes: d.notes||"", keywords: d.keywords||"", instructions: d.instructions||"", custom_sizes: d.customSizes||[], active_colors: d.activeColors||[],
-    colors: (d.colors||[]).map(c => ({ ...c, swatch: "" })),
+    colors: (d.colors||[]).map(c => ({ ...c, swatch: c.swatch || "" })),
     processes: d.processes||{},
     photos: (d.photos||[]).map(p => ({ id: p.id, note: p.note, date: p.date, src: "" })),
     supplier_bills: d.supplierBills||[], customer_orders: d.customerOrders||[],
@@ -417,6 +417,9 @@ function compressImage(file, maxDim = 1000, quality = 0.7) {
     reader.readAsDataURL(file);
   });
 }
+
+// Swatch images sync to the DB, so keep them small (~20-40KB) to protect storage.
+function compressSwatch(file) { return compressImage(file, 400, 0.6); }
 
 // Print a DOM element as a clean PDF (opens browser print dialog -> Save as PDF)
 function printSection(elementId, title) {
@@ -611,12 +614,12 @@ function PdfBtn({ targetId, title }) {
   return <Btn label="⤓ PDF" onClick={() => printSection(targetId, title)} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.gold}44` }} />;
 }
 
-function PhotoUpload({ label, value, onChange, size=60 }) {
+function PhotoUpload({ label, value, onChange, size=60, small=false }) {
   const ref = useRef();
   function handle(e) {
     const file = e.target.files[0];
     if (!file) return;
-    compressImage(file).then(onChange).catch(() => {});
+    (small ? compressSwatch(file) : compressImage(file)).then(onChange).catch(() => {});
   }
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
@@ -2598,7 +2601,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
           {d.colors.map((c,ci) => (
             <div key={c.id} style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${T.border}` }}>
               <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
-                <PhotoUpload value={c.swatch} onChange={v => updColor(c.id,"swatch",v)} size={56} />
+                <PhotoUpload value={c.swatch} onChange={v => updColor(c.id,"swatch",v)} size={56} small={true} />
                 <div style={{ flex:1 }}>
                   <Inp label={`Color ${ci+1}`} value={c.colorName} onChange={v => updColor(c.id,"colorName",v)} placeholder="e.g. Navy Blue" />
                   <div style={{ marginTop:6 }}>
@@ -2785,6 +2788,7 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
       <div {...dragHandle("process")}>
         {handleBar}
       <Section title="Process Assignments (optional — can fill later)">
+        {(d.createdByJobberId || d.processes?._createdByJobberId) && <div style={{ background:T.green+"15", border:`1px solid ${T.green}`, borderRadius:8, padding:"8px 12px", marginBottom:10, fontFamily:T.mono, fontSize:11, color:T.green }}>✓ Created by jobber: {(jobbers.find(j=>j.id===(d.createdByJobberId||d.processes?._createdByJobberId))||{}).name||"jobber"} — auto-assigned to Stitch (editable below)</div>}
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:12 }}>Assign a jobber for each process now, or leave blank — it can be set later, or auto-fills when a jobber logs their work.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
           {PROCESSES.filter(p => p!=="Fabric" && p!=="Cut to Pack" && p!=="Other").map(pn => {
@@ -3710,7 +3714,6 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
               const fcols = (fd.colors||[]);
               if (fcols.length) {
                 nd.colors = fcols.map((col,i)=>({ id:col.id||`C${Date.now()}_${i}`, colorName:(col.name||"").trim(), colorNo:"", name:(col.name||"").trim(), sleeve:"", meters:String(col.meters||""), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"", swatch:col.swatch||"" }));
-                nd.photos = fcols.filter(col=>col.swatch).map((col,i)=>({ src:col.swatch, desc:(col.name||`swatch ${i+1}`) }));
               }
             }
             await dbUpsert("designs", dToRow(nd));
@@ -4197,7 +4200,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 </div>
                 {(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}]).map((col,ci)=>(
                   <div key={col.id||ci} style={{ display:"flex", gap:8, alignItems:"flex-start", background:T.surface, borderRadius:6, padding:8, marginBottom:6 }}>
-                    <button onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressImage(f).then(src=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],swatch:src}; updLine(ln.id,"fabColors",arr); }).catch(()=>{}); }; inp.click(); }} style={{ width:48, height:48, flexShrink:0, borderRadius:6, border:`2px dashed ${T.accent}66`, background:col.swatch?`url(${col.swatch}) center/cover`:T.bg, color:T.accent, fontSize:18, cursor:"pointer" }}>{col.swatch?"":"+"}</button>
+                    <button onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressSwatch(f).then(src=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],swatch:src}; updLine(ln.id,"fabColors",arr); }).catch(()=>{}); }; inp.click(); }} style={{ width:48, height:48, flexShrink:0, borderRadius:6, border:`2px dashed ${T.accent}66`, background:col.swatch?`url(${col.swatch}) center/cover`:T.bg, color:T.accent, fontSize:18, cursor:"pointer" }}>{col.swatch?"":"+"}</button>
                     <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
                       <Inp label={`Colour ${ci+1}`} value={col.name} onChange={v=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],name:v}; updLine(ln.id,"fabColors",arr); }} />
                       <Inp label="Meters" type="number" value={col.meters} onChange={v=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],meters:v}; updLine(ln.id,"fabColors",arr); }} />
@@ -5205,7 +5208,6 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
               const fcols = (fd.colors||[]);
               if (fcols.length) {
                 nd.colors = fcols.map((col,i)=>({ id:col.id||`C${Date.now()}_${i}`, colorName:(col.name||"").trim(), colorNo:"", name:(col.name||"").trim(), sleeve:"", meters:String(col.meters||""), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"", swatch:col.swatch||"" }));
-                nd.photos = fcols.filter(col=>col.swatch).map((col,i)=>({ src:col.swatch, desc:(col.name||`swatch ${i+1}`) }));
               }
             }
             await dbUpsert("designs", dToRow(nd));
@@ -5309,7 +5311,7 @@ function JobberNewDesignModal({ user, designs, currentUser, onClose, onCreate })
   function updColor(id,k,v){ setColors(p=>p.map(c=>c.id===id?{...c,[k]:v}:c)); }
   function addColor(){ setColors(p=>[...p,{ id:`C${Date.now()}_${p.length}`, name:"", meters:"", swatch:"" }]); }
   function removeColor(id){ setColors(p=>p.length>1?p.filter(c=>c.id!==id):p); }
-  function pickSwatch(id){ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressImage(f).then(src=>updColor(id,"swatch",src)).catch(()=>{}); }; inp.click(); }
+  function pickSwatch(id){ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressSwatch(f).then(src=>updColor(id,"swatch",src)).catch(()=>{}); }; inp.click(); }
   function create() {
     if (!designNo.trim() || exists || saving) return;
     setSaving(true);
@@ -5323,9 +5325,11 @@ function JobberNewDesignModal({ user, designs, currentUser, onClose, onCreate })
     const nd = {
       ...base,
       supplier: supplier.trim(),
-      photos: builtColors.filter(c=>c.swatch).map((c,i)=>({ src:c.swatch, desc:c.colorName||`swatch ${i+1}` })),
       colors: builtColors,
-      notes: `Created by stitcher ${currentUser}. ${builtColors.length} colour swatch(es) + meters${supplier.trim()?` + supplier ${supplier.trim()}`:""} entered. Admin to complete details.`,
+      // auto-assign the creating stitcher to the Stitch process so the design links to them
+      processes: { ...(base.processes||{}), Stitch: { jobber: user.id, rate:"", code:"", recdDate:"", dlvdDate:"" }, _createdByJobberId: user.id },
+      createdByJobberId: user.id,
+      notes: `Created by stitcher ${currentUser}. Auto-assigned to ${currentUser} for Stitch. ${builtColors.length} colour swatch(es) + meters${supplier.trim()?` + supplier ${supplier.trim()}`:""} entered. Admin to complete details.`,
     };
     onCreate(nd);
   }
@@ -6419,21 +6423,6 @@ export default function App() {
     return () => { window.__erpSaveError = null; };
   }, []);
   useEffect(() => { loadAll(); }, []);
-  // auto-refresh every 20s so changes made on one device (admin/jobber) appear on others.
-  // BUT skip the refresh while a form/modal is open or an input is focused, so it never disturbs typing.
-  useEffect(() => {
-    if (!auth) return;
-    function safeRefresh() {
-      if (window.__erpModalsOpen && window.__erpModalsOpen > 0) return; // a form is open — don't refresh
-      const el = document.activeElement;
-      if (el && (el.tagName==="INPUT" || el.tagName==="TEXTAREA" || el.tagName==="SELECT" || el.isContentEditable)) return; // user is typing
-      loadAll();
-    }
-    const iv = setInterval(safeRefresh, 20000);
-    const onFocus = () => safeRefresh();
-    window.addEventListener("focus", onFocus);
-    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
-  }, [auth]);
   useEffect(() => { document.body.style.background = T.bg; document.body.style.margin = "0"; }, []);
 
   if (loading) return <Loader />;
