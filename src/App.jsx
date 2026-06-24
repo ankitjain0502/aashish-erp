@@ -1911,10 +1911,10 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"", edit_req_pending:!!c.editReqPending, edit_approved:!!c.editApproved };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"", edit_req_pending:!!c.editReqPending, edit_approved:!!c.editApproved, edited_once:!!c.editedOnce };
 }
 function rowToChallan(r) {
-  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", editReqPending:!!r.edit_req_pending, editApproved:!!r.edit_approved };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", editReqPending:!!r.edit_req_pending, editApproved:!!r.edit_approved, editedOnce:!!r.edited_once };
   // back-compat: if no lines array but has single design, synthesize one line
   if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
   return c;
@@ -4008,10 +4008,12 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     const amount = (+ln.qty||0) * (+ln.rate||0);
     const designExists = designs.some(d => String(d.designNo) === String(ln.designNo).trim());
     const isNewDesign = ln.newDesign && ln.designNo.trim() && !designExists;
+    // A typed design number that does NOT exist and is NOT marked as new = invalid (random number).
+    const unknownDesign = ln.designNo.trim() && !designExists && !ln.newDesign;
     const dup = (ln.designNo && ln.process)
       ? challans.find(c => challanDesigns(c).includes(String(ln.designNo).trim()) && (c.lines||[]).concat([{process:c.process}]).some(x=>x.process===ln.process) && c.status!=="rejected" && c.jobberId!==head.jobberId)
       : null;
-    return { amount, isNewDesign, dup, dupBlocked: dup && !ln.isSplit };
+    return { amount, isNewDesign, unknownDesign, dup, dupBlocked: dup && !ln.isSplit };
   }
   const total = lines.reduce((a,ln)=>{ const isHalf = !!ln.halfStitch && (ln.process||"").toLowerCase().includes("stitch"); return a+(isHalf?0:((+ln.qty||0)*(+ln.rate||0))); },0);
   const anyFullLine = lines.some(ln => {
@@ -4019,8 +4021,9 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     return !isHalfStitch; // any non-half-stitch line is money-bearing
   });
   const anyBlocked = lines.some(ln => lineInfo(ln).dupBlocked);
+  const anyUnknown = lines.some(ln => lineInfo(ln).unknownDesign);
   const validLines = lines.filter(ln => ln.designNo && ln.qty);
-  const canSave = head.jobberId && validLines.length>0 && !anyBlocked;
+  const canSave = head.jobberId && validLines.length>0 && !anyBlocked && !anyUnknown;
 
   const [saving, setSaving] = useState(false);
   function save() {
@@ -4258,6 +4261,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               );
             })()}
             {info.isNewDesign && <div style={{ fontFamily:T.mono, fontSize:9, color:T.green, marginTop:6 }}>✓ New placeholder design "{ln.designNo}" will be created.</div>}
+            {info.unknownDesign && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:6, fontWeight:700 }}>⚠ Design "{ln.designNo}" does not exist. Pick an existing design from the list, or tap "+ new" to create it. You cannot make a challan for a random number.</div>}
             {info.dup && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontFamily:T.mono, fontSize:10, color:info.dupBlocked?T.red:T.green, fontWeight:700 }}>⚠ {dupName} already logged "{ln.process}" on design {ln.designNo}.</div>
@@ -5043,7 +5047,8 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
   function showToast(msg, type="success") { setToast({msg,type}); setTimeout(() => setToast({msg:"",type:""}), 3000); }
   const myDesigns = designs.filter(d =>
     PROCESSES.some(p => d.processes?.[p]?.jobber===user.id) ||
-    (d.movements||[]).some(m => m.sentToId===user.id)
+    (d.movements||[]).some(m => m.sentToId===user.id) ||
+    (challans||[]).some(c => c.jobberId===user.id && c.status!=="rejected" && challanDesigns(c).includes(String(d.designNo)))
   );
 
   function updateDesign(updated) {
@@ -5104,6 +5109,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
           <span style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textTransform:"uppercase" }}>Your Assigned Designs — tap to fill sizes</span>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Btn label="🔄 Refresh" onClick={() => window.location.reload()} color={T.surface} textColor={T.steelLt} style={{ border:`1px solid ${T.border}` }} />
             {isStitcher && <Btn label="+ New Design" onClick={() => setShowNewDesign(true)} color={T.surface} textColor={T.accent} style={{ border:`1px solid ${T.accent}66` }} />}
             <Btn label="📒 My Account" onClick={() => setShowLedger(true)} color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
             <Btn label="🧾 Submit Bill" onClick={() => setShowSubmitBill(true)} color={T.surface} textColor={T.green} style={{ border:`1px solid ${T.border}` }} />
@@ -5155,10 +5161,12 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
                   {c.billed
                     ? <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>billed</span>
                     : c.editApproved
-                      ? <Btn label="Edit" small color={T.gold} textColor={T.bg} onClick={()=>setEditChallan(c)} />
+                      ? <Btn label="Edit now" small color={T.gold} textColor={T.bg} onClick={()=>setEditChallan(c)} />
                       : c.editReqPending
                         ? <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>edit requested…</span>
-                        : <Btn label="Request edit" small color={T.surface} textColor={T.accent} style={{ border:`1px solid ${T.accent}55` }} onClick={async()=>{
+                        : c.editedOnce
+                          ? <span style={{ fontFamily:T.mono, fontSize:9, color:T.green }}>✓ edited</span>
+                          : <Btn label="Request edit" small color={T.surface} textColor={T.accent} style={{ border:`1px solid ${T.accent}55` }} onClick={async()=>{
                             const u = { ...c, editReqPending:true };
                             await dbUpsert("challans", challanToRow(u));
                             setChallans(p=>p.map(x=>x.id===c.id?u:x));
@@ -5260,7 +5268,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         setShowNewDesign(false);
       }} />}
       {editChallan && <JobberEditChallanModal challan={editChallan} onClose={()=>setEditChallan(null)} onSave={async (updated) => {
-        const u = { ...updated, editApproved:false, editReqPending:false };
+        const u = { ...updated, editApproved:false, editReqPending:false, editedOnce:true };
         await dbUpsert("challans", challanToRow(u));
         setChallans(p=>p.map(x=>x.id===u.id?u:x));
         showToast("Challan updated ✓");
