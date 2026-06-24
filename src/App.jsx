@@ -2792,16 +2792,19 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:12 }}>Assign a jobber for each process now, or leave blank — it can be set later, or auto-fills when a jobber logs their work.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
           {PROCESSES.filter(p => p!=="Fabric" && p!=="Cut to Pack" && p!=="Other").map(pn => {
-            // auto-fill from challans: find a challan for THIS design where this process was done
+            // auto-fill from challans: find a challan line for THIS design + this process.
+            // The person who DOES the process is whoever the work was SENT TO (sentToId); if none, the challan creator.
             let challanJobberId = "";
             (challans||[]).forEach(c => {
               if (c.status==="rejected") return;
               if (!challanDesigns(c).includes(String(d.designNo))) return;
-              const lns = (c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process}];
+              const lns = (c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process,sentToId:c.sendToId}];
               lns.forEach(l => {
                 if (String(l.designNo)!==String(d.designNo)) return;
                 const lp = (l.process||"").toLowerCase();
-                if (lp.includes(pn.toLowerCase()) || pn.toLowerCase().includes(lp)) challanJobberId = c.jobberId;
+                if (lp.includes(pn.toLowerCase()) || pn.toLowerCase().includes(lp)) {
+                  challanJobberId = l.sentToId || c.sendToId || c.jobberId;
+                }
               });
             });
             return <ProcessAssignRow key={pn} procName={pn} jobbers={jobbers} value={d.processes?.[pn]?.jobber} autoValue={challanJobberId} onChange={id => assignProc(pn, id)} onAddJobber={onAddJobber} />;
@@ -5048,7 +5051,11 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
   const myDesigns = designs.filter(d =>
     PROCESSES.some(p => d.processes?.[p]?.jobber===user.id) ||
     (d.movements||[]).some(m => m.sentToId===user.id) ||
-    (challans||[]).some(c => c.jobberId===user.id && c.status!=="rejected" && challanDesigns(c).includes(String(d.designNo)))
+    (challans||[]).some(c => c.status!=="rejected" && challanDesigns(c).includes(String(d.designNo)) && (
+      c.jobberId===user.id ||
+      c.sendToId===user.id ||
+      (c.lines||[]).some(l => l.sentToId===user.id)
+    ))
   );
 
   function updateDesign(updated) {
