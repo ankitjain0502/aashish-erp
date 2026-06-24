@@ -2480,6 +2480,12 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
           <Inp label="Supplier" value={d.supplier} onChange={upd("supplier")} />
           <Inp label="Fit" value={d.fit} onChange={upd("fit")} options={FITS} />
           <Inp label="Sleeve Type" value={d.sleeveType||"Full"} onChange={upd("sleeveType")} options={["Full","Half","Both"]} />
+          <div>
+            <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4, textTransform:"uppercase" }}>Total Meters (all colours)</div>
+            <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, padding:"9px 11px", fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.gold }}>
+              {(() => { const full=(d.colors||[]).reduce((a,c)=>a+(+c.meters||0),0); const half=(d.colors||[]).reduce((a,c)=>a+(+c.metersHalf||0),0); const tot=full+half; return tot? `${tot} m${half?` (${full}+${half})`:""}` : "—"; })()}
+            </div>
+          </div>
         </div>
         <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end", marginTop:6 }}>
           <div>
@@ -3696,8 +3702,11 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
             const fd = (c.newDesignData||{})[dn];
             if (fd) {
               if (fd.supplier) nd.supplier = fd.supplier;
-              if ((fd.photos||[]).length) nd.photos = fd.photos.map((src,i)=>({ src, desc:`swatch ${i+1}` }));
-              if (fd.meters) nd.colors = [{ id:`C${Date.now()}`, name:"", meters:String(fd.meters), metersHalf:"", sizes:{}, sizesHalf:{}, sampleFabric:[], shrinkage:"", sampleShrinkage:"" }];
+              const fcols = (fd.colors||[]);
+              if (fcols.length) {
+                nd.colors = fcols.map((col,i)=>({ id:col.id||`C${Date.now()}_${i}`, colorName:(col.name||"").trim(), colorNo:"", name:(col.name||"").trim(), sleeve:"", meters:String(col.meters||""), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"", swatch:col.swatch||"" }));
+                nd.photos = fcols.filter(col=>col.swatch).map((col,i)=>({ src:col.swatch, desc:(col.name||`swatch ${i+1}`) }));
+              }
             }
             await dbUpsert("designs", dToRow(nd));
             setDesigns(p => [nd, ...p]);
@@ -4027,7 +4036,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
     const newDesignNos = validLines.filter(ln => lineInfo(ln).isNewDesign).map(ln => String(ln.designNo).trim());
     const newDesignData = {};
     validLines.filter(ln => lineInfo(ln).isNewDesign).forEach(ln => {
-      newDesignData[String(ln.designNo).trim()] = { meters:ln.fabMeters||"", supplier:ln.fabSupplier||"", photos:ln.fabPhotos||[] };
+      newDesignData[String(ln.designNo).trim()] = { supplier:ln.fabSupplier||"", colors:(ln.fabColors||[]).filter(c=>c.name||c.meters||c.swatch) };
     });
     // first line's process/design kept at top-level for back-compat & simple displays
     const first = builtLines[0];
@@ -4177,21 +4186,21 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
             {/* Fabric details for a NEW design created via challan */}
             {ln.newDesign && ln.designNo.trim() && (
               <div style={{ background:T.accent+"0D", border:`1px solid ${T.accent}44`, borderRadius:8, padding:10, marginTop:8 }}>
-                <div style={{ fontFamily:T.mono, fontSize:9, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:8 }}>New design — add fabric details (admin can complete rest later)</div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
-                  <Inp label="Total Meters" type="number" value={ln.fabMeters||""} onChange={v => updLine(ln.id,"fabMeters",v)} />
+                <div style={{ fontFamily:T.mono, fontSize:9, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:8 }}>New design — add colour swatches (admin can complete rest later)</div>
+                <div style={{ marginBottom:8 }}>
                   <Inp label="Fabric Supplier (name)" value={ln.fabSupplier||""} onChange={v => updLine(ln.id,"fabSupplier",v)} />
                 </div>
-                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:6 }}>Swatch Photos</label>
-                <button onClick={() => { const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.multiple=true; inp.capture="environment"; inp.onchange=(e)=>{ Array.from(e.target.files||[]).forEach(f=>compressImage(f).then(src=>updLine(ln.id,"fabPhotos",[...(ln.fabPhotos||[]),src])).catch(()=>{})); }; inp.click(); }} style={{ background:T.surface, border:`1px solid ${T.accent}66`, color:T.accent, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>📷 Add Swatch Photo(s)</button>
-                {(ln.fabPhotos||[]).length>0 && <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
-                  {(ln.fabPhotos||[]).map((src,pi)=>(
-                    <div key={pi} style={{ position:"relative" }}>
-                      <img src={src} alt="" style={{ width:50, height:50, borderRadius:5, objectFit:"cover", border:`1px solid ${T.border}` }} />
-                      <button onClick={()=>updLine(ln.id,"fabPhotos",(ln.fabPhotos||[]).filter((_,x)=>x!==pi))} style={{ position:"absolute", top:-5, right:-5, background:T.red, color:"#fff", border:"none", borderRadius:"50%", width:16, height:16, fontSize:10, cursor:"pointer", lineHeight:1 }}>×</button>
+                {(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}]).map((col,ci)=>(
+                  <div key={col.id||ci} style={{ display:"flex", gap:8, alignItems:"flex-start", background:T.surface, borderRadius:6, padding:8, marginBottom:6 }}>
+                    <button onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressImage(f).then(src=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],swatch:src}; updLine(ln.id,"fabColors",arr); }).catch(()=>{}); }; inp.click(); }} style={{ width:48, height:48, flexShrink:0, borderRadius:6, border:`2px dashed ${T.accent}66`, background:col.swatch?`url(${col.swatch}) center/cover`:T.bg, color:T.accent, fontSize:18, cursor:"pointer" }}>{col.swatch?"":"+"}</button>
+                    <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                      <Inp label={`Colour ${ci+1}`} value={col.name} onChange={v=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],name:v}; updLine(ln.id,"fabColors",arr); }} />
+                      <Inp label="Meters" type="number" value={col.meters} onChange={v=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],meters:v}; updLine(ln.id,"fabColors",arr); }} />
                     </div>
-                  ))}
-                </div>}
+                    {(ln.fabColors||[]).length>1 && <button onClick={()=>updLine(ln.id,"fabColors",(ln.fabColors||[]).filter((_,x)=>x!==ci))} style={{ background:T.red+"22", color:T.red, border:"none", borderRadius:5, padding:"4px 7px", cursor:"pointer", fontSize:10 }}>✕</button>}
+                  </div>
+                ))}
+                <button onClick={()=>updLine(ln.id,"fabColors",[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}]),{id:`c${Date.now()}`,name:"",meters:"",swatch:""}])} style={{ background:T.surface, border:`1px solid ${T.accent}55`, color:T.accent, borderRadius:6, padding:"5px 10px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>+ Add another colour</button>
               </div>
             )}
             {/* Per-design received/sent tracking */}
@@ -5190,8 +5199,11 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
             const fd = (c.newDesignData||{})[dn];
             if (fd) {
               if (fd.supplier) nd.supplier = fd.supplier;
-              if ((fd.photos||[]).length) nd.photos = fd.photos.map((src,i)=>({ src, desc:`swatch ${i+1}` }));
-              if (fd.meters) nd.colors = [{ id:`C${Date.now()}`, name:"", meters:String(fd.meters), metersHalf:"", sizes:{}, sizesHalf:{}, sampleFabric:[], shrinkage:"", sampleShrinkage:"" }];
+              const fcols = (fd.colors||[]);
+              if (fcols.length) {
+                nd.colors = fcols.map((col,i)=>({ id:col.id||`C${Date.now()}_${i}`, colorName:(col.name||"").trim(), colorNo:"", name:(col.name||"").trim(), sleeve:"", meters:String(col.meters||""), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"", swatch:col.swatch||"" }));
+                nd.photos = fcols.filter(col=>col.swatch).map((col,i)=>({ src:col.swatch, desc:(col.name||`swatch ${i+1}`) }));
+              }
             }
             await dbUpsert("designs", dToRow(nd));
             setDesigns(p => [nd, ...p]);
@@ -5287,68 +5299,55 @@ function JobberEditChallanModal({ challan, onClose, onSave }) {
 // ── Jobber (stitcher) creates a basic new design ──────────────────────────────
 function JobberNewDesignModal({ user, designs, currentUser, onClose, onCreate }) {
   const [designNo, setDesignNo] = useState("");
-  const [meters, setMeters] = useState("");
   const [supplier, setSupplier] = useState("");
-  const [photos, setPhotos] = useState([]);
+  const [colors, setColors] = useState([{ id:`C${Date.now()}`, name:"", meters:"", swatch:"" }]);
   const [saving, setSaving] = useState(false);
-  const fileRef = useRef(null);
   const exists = designNo.trim() && designs.some(d => String(d.designNo)===String(designNo).trim());
-  function addPhotos(e) {
-    const files = Array.from(e.target.files||[]);
-    files.forEach(f => compressImage(f).then(src => setPhotos(p => [...p, src])).catch(()=>{}));
-  }
+  function updColor(id,k,v){ setColors(p=>p.map(c=>c.id===id?{...c,[k]:v}:c)); }
+  function addColor(){ setColors(p=>[...p,{ id:`C${Date.now()}_${p.length}`, name:"", meters:"", swatch:"" }]); }
+  function removeColor(id){ setColors(p=>p.length>1?p.filter(c=>c.id!==id):p); }
+  function pickSwatch(id){ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressImage(f).then(src=>updColor(id,"swatch",src)).catch(()=>{}); }; inp.click(); }
   function create() {
     if (!designNo.trim() || exists || saving) return;
     setSaving(true);
     const base = makePlaceholderDesign({ designNo:designNo.trim(), createdBy:currentUser }, currentUser);
-    // Build colors: one per swatch photo (so each shows as a fabric swatch on the design page).
-    // First color carries the meters. If no photos, fall back to a single meters-only color.
-    let colors = [];
-    if (photos.length > 0) {
-      colors = photos.map((src, i) => ({
-        id:`C${Date.now()}_${i}`, colorName:`Swatch ${i+1}`, colorNo:"", name:"", sleeve:"",
-        meters: i===0 ? String(meters||"") : "", metersHalf:"",
-        sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"",
-        swatch: src,
-      }));
-    } else if (meters) {
-      colors = [{ id:`C${Date.now()}`, colorName:"", colorNo:"", name:"", sleeve:"", meters:String(meters), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"", swatch:"" }];
-    }
+    // map each color row into a full design color (links to Color Swatches in design tab)
+    const builtColors = colors.filter(c => c.name.trim() || c.meters || c.swatch).map((c,i) => ({
+      id:c.id||`C${Date.now()}_${i}`, colorName:c.name.trim(), colorNo:"", name:c.name.trim(), sleeve:"",
+      meters:String(c.meters||""), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[],
+      balance:"", shrinkage:"", sampleShrinkage:"", swatch:c.swatch||"",
+    }));
     const nd = {
       ...base,
       supplier: supplier.trim(),
-      photos: photos.map((src,i)=>({ src, desc:`swatch ${i+1}` })),
-      colors,
-      notes: `Created by stitcher ${currentUser}. Swatch photos + meters${supplier.trim()?` + supplier ${supplier.trim()}`:""} entered. Admin to complete details.`,
+      photos: builtColors.filter(c=>c.swatch).map((c,i)=>({ src:c.swatch, desc:c.colorName||`swatch ${i+1}` })),
+      colors: builtColors,
+      notes: `Created by stitcher ${currentUser}. ${builtColors.length} colour swatch(es) + meters${supplier.trim()?` + supplier ${supplier.trim()}`:""} entered. Admin to complete details.`,
     };
     onCreate(nd);
   }
   return (
     <Modal title="+ New Design (stitcher)" onClose={onClose}>
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:14 }}>Enter the basics now — admin will fill the rest. Design number, fabric swatch photos, and total meters.</div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:14 }}>Enter the basics now — admin will fill the rest. Add each colour with its meters and a swatch photo.</div>
       <div style={{ marginBottom:14 }}>
         <Inp label="Design No *" value={designNo} onChange={setDesignNo} />
         {exists && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:4 }}>⚠ Design {designNo} already exists — pick a different number.</div>}
       </div>
       <div style={{ marginBottom:14 }}>
-        <Inp label="Total Fabric Meters" value={meters} onChange={setMeters} type="number" />
-      </div>
-      <div style={{ marginBottom:14 }}>
         <Inp label="Fabric Supplier (name only)" value={supplier} onChange={setSupplier} />
       </div>
-      <div style={{ marginBottom:14 }}>
-        <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:6 }}>Fabric Swatch Photos</label>
-        <Btn label="📷 Add Photo(s)" onClick={()=>fileRef.current.click()} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}66` }} />
-        <input ref={fileRef} type="file" accept="image/*" multiple capture="environment" style={{ display:"none" }} onChange={addPhotos} />
-        {photos.length>0 && <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>
-          {photos.map((src,i)=>(
-            <div key={i} style={{ position:"relative" }}>
-              <img src={src} alt="" style={{ width:60, height:60, borderRadius:6, objectFit:"cover", border:`1px solid ${T.border}` }} />
-              <button onClick={()=>setPhotos(p=>p.filter((_,x)=>x!==i))} style={{ position:"absolute", top:-6, right:-6, background:T.red, color:"#fff", border:"none", borderRadius:"50%", width:18, height:18, fontSize:11, cursor:"pointer", lineHeight:1 }}>×</button>
-            </div>
-          ))}
-        </div>}
-      </div>
+      <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:8 }}>Colour Swatches</label>
+      {colors.map((c,i)=>(
+        <div key={c.id} style={{ display:"flex", gap:10, alignItems:"flex-start", background:T.surface, borderRadius:8, padding:10, marginBottom:10 }}>
+          <button onClick={()=>pickSwatch(c.id)} style={{ width:64, height:64, flexShrink:0, borderRadius:8, border:`2px dashed ${T.accent}66`, background:c.swatch?`url(${c.swatch}) center/cover`:T.bg, color:T.accent, fontSize:22, cursor:"pointer" }}>{c.swatch?"":"+"}</button>
+          <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+            <Inp label={`Colour ${i+1} name`} value={c.name} onChange={v=>updColor(c.id,"name",v)} />
+            <Inp label="Meters" type="number" value={c.meters} onChange={v=>updColor(c.id,"meters",v)} />
+          </div>
+          {colors.length>1 && <button onClick={()=>removeColor(c.id)} style={{ background:T.red+"22", color:T.red, border:"none", borderRadius:6, padding:"6px 8px", cursor:"pointer", fontSize:11 }}>✕</button>}
+        </div>
+      ))}
+      <Btn label="+ Add another colour" onClick={addColor} color={T.surface} textColor={T.accent} small style={{ border:`1px solid ${T.accent}55`, marginBottom:16 }} />
       <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
         <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
         <Btn label={saving?"Creating…":"Create Design"} onClick={create} disabled={!designNo.trim()||exists||saving} color={T.accent} textColor="#fff" />
