@@ -2338,12 +2338,15 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
 }
 
 // ── Process Assignment dropdown (filtered by process, show-all toggle, Other) ──
-function ProcessAssignRow({ procName, jobbers, value, onChange, onAddJobber }) {
+function ProcessAssignRow({ procName, jobbers, value, autoValue, onChange, onAddJobber }) {
   const [showAll, setShowAll] = useState(false);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPrefix, setNewPrefix] = useState("");
   const list = showAll ? jobbers : jobbers.filter(j => jobberDoesProcess(j, procName));
+  const effValue = value || autoValue || "";
+  const linkedFromChallan = !value && !!autoValue;
+  const autoName = autoValue ? (jobbers.find(j=>j.id===autoValue)||{}).name||"" : "";
   async function addNew() {
     if (!newName.trim()) return;
     const created = await onAddJobber({ name:newName.trim(), process:procName, prefix:newPrefix.trim() });
@@ -2351,7 +2354,7 @@ function ProcessAssignRow({ procName, jobbers, value, onChange, onAddJobber }) {
     setAdding(false); setNewName(""); setNewPrefix("");
   }
   return (
-    <div style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${T.border}` }}>
+    <div style={{ background:T.surface, borderRadius:8, padding:12, border:`1px solid ${linkedFromChallan?T.green:T.border}` }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
         <span style={{ fontFamily:T.mono, fontSize:11, color:T.white, fontWeight:700 }}>{procName}</span>
         <button onClick={() => setShowAll(s => !s)} style={{ background:"none", border:"none", color:T.steelLt, fontSize:10, cursor:"pointer", fontFamily:T.mono }}>{showAll?"show process only":"show all"}</button>
@@ -2364,11 +2367,14 @@ function ProcessAssignRow({ procName, jobbers, value, onChange, onAddJobber }) {
           <Btn label="✕" onClick={() => setAdding(false)} color={T.surface} textColor={T.steelLt} small />
         </div>
       ) : (
-        <select value={value||""} onChange={e => { if (e.target.value === "__other__") { setAdding(true); } else { onChange(e.target.value); } }} style={{ background:T.bg, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, width:"100%" }}>
-          <option value="">— not assigned yet —</option>
+        <>
+        <select value={effValue} onChange={e => { if (e.target.value === "__other__") { setAdding(true); } else { onChange(e.target.value); } }} style={{ background:T.bg, border:`1px solid ${linkedFromChallan?T.green:T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, width:"100%" }}>
+          <option value="">{linkedFromChallan?`↳ ${autoName} (from challan)`:"— not assigned yet —"}</option>
           {list.map(j => <option key={j.id} value={j.id}>{j.name}{j.prefix?` (${j.prefix})`:""}</option>)}
           <option value="__other__">+ Other (add new jobber)</option>
         </select>
+        {linkedFromChallan && <div style={{ fontFamily:T.mono, fontSize:8, color:T.green, marginTop:3 }}>auto from challan · editable</div>}
+        </>
       )}
     </div>
   );
@@ -2387,7 +2393,7 @@ function FabricBillPhoto({ bill, onPick }) {
 }
 
 // ── Design Form (specs + swatches + photos + notes; NO sizes) ─────────────────
-function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [], creditNotes = [] }) {
+function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, designs = [], creditNotes = [], challans = [] }) {
   const blank = { designNo:"", lotNo:"", brand:"RUDE INC", style:"", fabric:"", supplier:"", p1Code:"", p1MRP:"", p2Code:"", p2MRP:"", fit:"Slim Fit", collarType:"Round Collar", shrinkageLen:"", shrinkageWid:"", placket:"Inside", washType:"Normal", specs: SPEC_KEYS.map(k => ({ key:k, text:"", thumb:"" })), ratio:{}, trims:"", drawingAvg:"", manualAvg:{ smxxl:"", x3to5:"", bigLabel:"6XL+", big:"" }, dateProgram:"", dateCut:"", mainThumb:"", notes:"", keywords:"", instructions:"", customSizes:[], photos:[], colors:[], activeColors:["S","M","L","XL","XXL"], processes:{}, movements:[], jobberEntries:[], supplierBills:[], customerOrders:[], status:"New", mrpFinalized:false };
   const [d, setD] = useState(existing ? {...existing} : blank);
   const DEFAULT_ORDER = ["identity","avg","specs","sizes","ratio","colors","instructions","fabricbill","photos","process","note"];
@@ -2770,9 +2776,21 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
       <Section title="Process Assignments (optional — can fill later)">
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.textDim, marginBottom:12 }}>Assign a jobber for each process now, or leave blank — it can be set later, or auto-fills when a jobber logs their work.</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
-          {PROCESSES.filter(p => p!=="Fabric" && p!=="Cut to Pack" && p!=="Other").map(pn => (
-            <ProcessAssignRow key={pn} procName={pn} jobbers={jobbers} value={d.processes?.[pn]?.jobber} onChange={id => assignProc(pn, id)} onAddJobber={onAddJobber} />
-          ))}
+          {PROCESSES.filter(p => p!=="Fabric" && p!=="Cut to Pack" && p!=="Other").map(pn => {
+            // auto-fill from challans: find a challan for THIS design where this process was done
+            let challanJobberId = "";
+            (challans||[]).forEach(c => {
+              if (c.status==="rejected") return;
+              if (!challanDesigns(c).includes(String(d.designNo))) return;
+              const lns = (c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process}];
+              lns.forEach(l => {
+                if (String(l.designNo)!==String(d.designNo)) return;
+                const lp = (l.process||"").toLowerCase();
+                if (lp.includes(pn.toLowerCase()) || pn.toLowerCase().includes(lp)) challanJobberId = c.jobberId;
+              });
+            });
+            return <ProcessAssignRow key={pn} procName={pn} jobbers={jobbers} value={d.processes?.[pn]?.jobber} autoValue={challanJobberId} onChange={id => assignProc(pn, id)} onAddJobber={onAddJobber} />;
+          })}
         </div>
       </Section>
       </div>
@@ -4123,7 +4141,16 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
                 <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Process</label>
                 <select value={ln.process} onChange={e => updLine(ln.id,"process",e.target.value)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }}>
                   <option value="">—</option>
-                  {PROCESSES.map(p => <option key={p} value={p}>{p}</option>)}
+                  {(() => {
+                    // For a jobber login, show ONLY the tasks this jobber does (with code). Admin sees all.
+                    const me = fixedJobber ? jobbers.find(j=>j.id===fixedJobber) : null;
+                    const myProcs = me ? (me.processCodes||[]).map(x=>x.process).filter(Boolean) : [];
+                    const opts = (fixedJobber && myProcs.length) ? myProcs : PROCESSES;
+                    return opts.map(p => {
+                      const code = me ? ((me.processCodes||[]).find(x=>x.process===p)||{}).code : "";
+                      return <option key={p} value={p}>{p}{code?` (${code})`:""}</option>;
+                    });
+                  })()}
                 </select>
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:4, width:70 }}>
@@ -4838,7 +4865,9 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
   const [showLedger, setShowLedger] = useState(false);
   const [showSubmitBill, setShowSubmitBill] = useState(false);
   const [showNewDesign, setShowNewDesign] = useState(false);
-  const isStitcher = jobberDoesProcess(user, "Stitch");
+  const isStitcher = jobberDoesProcess(user, "Stitch")
+    || (user.process||"").toLowerCase().includes("stitch")
+    || (user.processCodes||[]).some(x => (x.process||"").toLowerCase().includes("stitch"));
   const [lang, setLang] = useState("en");
   const L = makeL(lang);
   const [toast, setToast] = useState({ msg:"", type:"" });
@@ -5742,7 +5771,7 @@ ${vouchers}
           <Btn label="Cancel" onClick={() => { setCreating(false); setEditing(false); }} color={T.surface} textColor={T.steelLt} small />
         </div>
         <div style={{ maxWidth:1000, margin:"0 auto", padding:24 }}>
-          <DesignForm onSave={saveDesign} onCancel={() => { setCreating(false); setEditing(false); }} existing={editing?sel:null} jobbers={jobbers} onAddJobber={addJobberInline} designs={designs} creditNotes={creditNotes} />
+          <DesignForm onSave={saveDesign} onCancel={() => { setCreating(false); setEditing(false); }} existing={editing?sel:null} jobbers={jobbers} onAddJobber={addJobberInline} designs={designs} creditNotes={creditNotes} challans={challans} />
         </div>
         <Toast {...toast} />
       </div>
