@@ -1903,10 +1903,10 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"" };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"", edit_req_pending:!!c.editReqPending, edit_approved:!!c.editApproved };
 }
 function rowToChallan(r) {
-  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", editReqPending:!!r.edit_req_pending, editApproved:!!r.edit_approved };
   // back-compat: if no lines array but has single design, synthesize one line
   if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
   return c;
@@ -3513,7 +3513,7 @@ function ChallansPanel({ jobbers, designs, setDesigns, challans, setChallans, bi
   const [filterJ, setFilterJ] = useState("");
   const [filterDesign, setFilterDesign] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [showApproved, setShowApproved] = useState(false); // default: hide approved, show pending
+  const [showApproved, setShowApproved] = useState(true); // default: show ALL challans
   const [monthSel, setMonthSel] = useState([]); // multi-select months; empty = all
   const jname = id => jobbers.find(j => j.id===id)?.name || id || "—";
   const monthOf = d => (d||"").slice(0,7); // YYYY-MM
@@ -4290,9 +4290,122 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
 }
 
 // ── Bills + Payments + Dual Ledger ────────────────────────────────────────────
+// ── Bill Edit Modal (admin): change bill no, date, and per-line qty/rate ──────
+function BillEditModal({ bill, jobberName, onClose, onSave }) {
+  const [billNo, setBillNo] = useState(bill.billNo||"");
+  const [billDate, setBillDate] = useState(bill.billDate||"");
+  const [lines, setLines] = useState((bill.lines||[]).map(l=>({...l})));
+  function updLine(i,k,v){ setLines(p=>p.map((l,idx)=>{ if(idx!==i) return l; const nl={...l,[k]:v}; if(k==="qty"||k==="rate") nl.amount=(+nl.qty||0)*(+nl.rate||0); return nl; })); }
+  function doSave(){
+    const built = lines.map(l=>({ ...l, qty:+l.qty||0, rate:+l.rate||0, amount:(+l.qty||0)*(+l.rate||0) }));
+    const gross = built.reduce((a,l)=>a+(+l.amount||0),0);
+    const gstAmt = bill.hasGst ? gross*((+bill.gstPct||0)/100) : 0;
+    const total = Math.round(gross+gstAmt);
+    onSave({ ...bill, billNo, billDate, lines:built, gross, gstAmt, total });
+  }
+  const cell = { padding:"6px 8px", fontFamily:T.mono, fontSize:12 };
+  return (
+    <Modal title={`Edit Bill — ${jobberName||""}`} onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.orange, marginBottom:12 }}>⚠ Editing an approved bill. Change bill no, date, qty, rate.</div>
+      <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+        <Inp label="Bill No" value={billNo} onChange={setBillNo} style={{ minWidth:120 }} />
+        <Inp label="Bill Date" type="date" value={billDate} onChange={setBillDate} style={{ minWidth:150 }} />
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", minWidth:520 }}>
+          <thead><tr style={{ background:T.surface }}>{["Challan","Design","Process","Qty","Rate","Amount"].map(h => <th key={h} style={{ ...cell, fontSize:9, color:T.steelLt, textTransform:"uppercase", textAlign:(h==="Qty"||h==="Rate"||h==="Amount")?"right":"left" }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {lines.map((l,i)=>(
+              <tr key={i} style={{ borderBottom:`1px solid ${T.border}` }}>
+                <td style={{ ...cell, color:T.steelLt }}>{l.challanNo||"—"}</td>
+                <td style={{ ...cell, color:T.gold, fontWeight:700 }}>D{l.designNo}</td>
+                <td style={{ ...cell, color:T.text }}>{l.process||"—"}</td>
+                <td style={{ ...cell, width:70 }}><input type="number" value={l.qty} onChange={e=>updLine(i,"qty",e.target.value)} style={{ width:60, background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontSize:12, padding:"4px 6px", textAlign:"right" }} /></td>
+                <td style={{ ...cell, width:70 }}><input type="number" value={l.rate} onChange={e=>updLine(i,"rate",e.target.value)} style={{ width:60, background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontSize:12, padding:"4px 6px", textAlign:"right" }} /></td>
+                <td style={{ ...cell, textAlign:"right", color:T.white, fontWeight:700 }}>Rs.{(+l.amount||0).toFixed(0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14 }}>
+        <span style={{ fontFamily:T.mono, fontSize:13, fontWeight:700, color:T.gold }}>Gross Rs.{lines.reduce((a,l)=>a+(+l.amount||0),0).toFixed(0)}</span>
+        <div style={{ display:"flex", gap:10 }}>
+          <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+          <Btn label="Save Changes" onClick={doSave} color={T.gold} textColor={T.bg} />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Bill Detail Modal: grouped by challan, subtotal per challan ───────────────
+function BillDetailModal({ bill, jobberName, onClose }) {
+  const lines = bill.lines || [];
+  // group lines by challanNo (fallback "—")
+  const groups = {};
+  lines.forEach(l => {
+    const key = l.challanNo || "—";
+    if (!groups[key]) groups[key] = { challanNo:key, date:l.date||"", rows:[] };
+    if (!groups[key].date && l.date) groups[key].date = l.date;
+    groups[key].rows.push(l);
+  });
+  const groupList = Object.values(groups);
+  const grand = lines.reduce((a,l)=>a+(+l.amount||0),0);
+  const cell = { padding:"7px 9px", fontFamily:T.mono, fontSize:12, borderBottom:`1px solid ${T.border}` };
+  const head = { ...cell, fontSize:9, color:T.steelLt, textTransform:"uppercase", textAlign:"left", background:T.surface };
+  return (
+    <Modal title={`Bill ${bill.billNo||""} · ${jobberName||""}`} onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:12 }}>Date {bill.billDate||"—"} · {groupList.length} challan(s) · {lines.length} line(s)</div>
+      {groupList.map((g,gi) => {
+        const sub = g.rows.reduce((a,l)=>a+(+l.amount||0),0);
+        const subQty = g.rows.reduce((a,l)=>a+(+l.qty||0),0);
+        return (
+          <div key={gi} style={{ marginBottom:16, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+            <div style={{ background:T.accent+"14", padding:"8px 10px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.accent }}>Challan {g.challanNo}</span>
+              <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>{g.date}</span>
+            </div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", minWidth:520 }}>
+                <thead><tr>{["Design","Process","Qty","Rate","Amount"].map(h => <th key={h} style={{ ...head, textAlign: (h==="Qty"||h==="Rate"||h==="Amount")?"right":"left" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {g.rows.map((l,ri) => (
+                    <tr key={ri}>
+                      <td style={{ ...cell, color:T.gold, fontWeight:700 }}>D{l.designNo}</td>
+                      <td style={{ ...cell, color:T.text }}>{l.process||"—"}</td>
+                      <td style={{ ...cell, textAlign:"right", color:T.text }}>{l.qty||0}</td>
+                      <td style={{ ...cell, textAlign:"right", color:T.text }}>{l.rate||0}</td>
+                      <td style={{ ...cell, textAlign:"right", color:T.white, fontWeight:700 }}>Rs.{(+l.amount||0).toFixed(0)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ ...cell, fontWeight:700, color:T.steelLt }} colSpan={2}>Subtotal</td>
+                    <td style={{ ...cell, textAlign:"right", fontWeight:700, color:T.text }}>{subQty}</td>
+                    <td style={{ ...cell }}></td>
+                    <td style={{ ...cell, textAlign:"right", fontWeight:900, color:T.green }}>Rs.{sub.toFixed(0)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 10px", background:T.surface, borderRadius:8 }}>
+        <span style={{ fontFamily:T.mono, fontSize:12, color:T.steelLt, textTransform:"uppercase", fontWeight:700 }}>Bill Total {bill.hasGst&&+bill.gstPct>0?`(+ ${bill.gstPct}% GST)`:""}</span>
+        <span style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:T.gold }}>Rs.{grand.toFixed(0)}{bill.hasGst&&+bill.total?` → Rs.${(+bill.total).toFixed(0)}`:""}</span>
+      </div>
+      {lines.length===0 && <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, textAlign:"center", padding:20 }}>This bill has no line details saved.</div>}
+    </Modal>
+  );
+}
+
 function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments, challans, setChallans, creditNotes, setCreditNotes, showToast, currentUser }) {
   const [selJ, setSelJ] = useState("");
   const [ledgerView, setLedgerView] = useState("bank");
+  const [detailBill, setDetailBill] = useState(null);
+  const [changeBillId, setChangeBillId] = useState("");
+  const [editBill, setEditBill] = useState(null);
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
   const [showBillForm, setShowBillForm] = useState(false);
   const [showCNForm, setShowCNForm] = useState(false);
@@ -4338,7 +4451,16 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
   const acctDebit = acctRows.reduce((a,r)=>a+r.debit,0);
   const acctCredit = acctRows.reduce((a,r)=>a+r.credit,0);
 
-  async function deleteBill(id) { await dbDelete("bills", id); setBills(p=>p.filter(b=>b.id!==id)); recordActivity(currentUser, "Deleted bill", `Jobber ${j?.name||""}`, ""); showToast("Bill deleted"); }
+  async function deleteBill(id, bill) {
+    await dbDelete("bills", id);
+    setBills(p=>p.filter(b=>b.id!==id));
+    // free any challans that were billed by this bill
+    const freed = (challans||[]).filter(c => c.billId===id);
+    for (const c of freed) { const u={...c, billed:false, billId:""}; await dbUpsert("challans", challanToRow(u)); }
+    if (freed.length) setChallans(p => p.map(c => c.billId===id ? { ...c, billed:false, billId:"" } : c));
+    recordActivity(currentUser, "Deleted bill", `Jobber ${j?.name||""}`, bill?.billNo?`Bill ${bill.billNo}`:"");
+    showToast(freed.length?"Bill deleted — challans freed":"Bill deleted");
+  }
   async function deletePay(id) { if(!window.confirm("Delete this payment? This cannot be undone.")) return; await dbDelete("payments", id); setPayments(p=>p.filter(x=>x.id!==id)); recordActivity(currentUser, "Deleted payment", `Jobber ${j?.name||""}`, ""); showToast("Payment deleted"); }
   const [editPay, setEditPay] = useState(null);
   async function saveEditedPay(updated) {
@@ -4440,12 +4562,18 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
                         if(!window.confirm("Reject this bill? The jobber will need to resubmit.")) return;
                         await dbDelete("bills", b.id);
                         setBills(p => p.filter(x=>x.id!==b.id));
-                        showToast("Bill rejected");
+                        // free up the challans that were billed by this rejected bill
+                        const freed = (challans||[]).filter(c => c.billId===b.id);
+                        for (const c of freed) { const u={...c, billed:false, billId:""}; await dbUpsert("challans", challanToRow(u)); }
+                        setChallans(p => p.map(c => c.billId===b.id ? { ...c, billed:false, billId:"" } : c));
+                        showToast("Bill rejected — challans freed");
                       }} />
                     </div>
                   </div>
                 ))}
               </div>
+            );
+          })()}
             );
           })()}
 
@@ -4527,14 +4655,24 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
                 const linkedCh = challansForBill(b, challans);
                 const linkedNos = [...new Set(linkedCh.map(c=>c.challanNo).filter(Boolean))];
                 return (
-                <tr key={b.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(b.billDate)}` }}>
+                <tr key={b.id||i} onClick={()=>setDetailBill(b)} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(b.billDate)}`, cursor:"pointer" }}>
                   <td style={{ padding:"8px 10px", color:T.steelLt }}>{b.billDate}</td>
-                  <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{b.billNo}</td>
+                  <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, textDecoration:"underline" }}>{b.billNo}</td>
                   <td style={{ padding:"8px 10px", color:T.text, fontFamily:T.mono }}>{(b.lines||[]).map(l=>l.designNo).join(", ")}</td>
                   <td style={{ padding:"8px 10px", color:linkedNos.length?T.green:T.textDim, fontFamily:T.mono, fontSize:10 }}>{linkedNos.length?linkedNos.join(", "):"none"}</td>
                   <td style={{ padding:"8px 10px" }}><Badge label={b.hasGst?"GST/Bank":"Cash"} color={b.hasGst?T.gold:T.steelLt} /></td>
                   <td style={{ padding:"8px 10px", color:T.white, fontFamily:T.mono, fontWeight:700 }}>Rs.{(+b.total||0).toFixed(2)}</td>
-                  <td style={{ padding:"8px 10px" }}><Btn label="✕" onClick={() => deleteBill(b.id)} color={T.red+"22"} textColor={T.red} small /></td>
+                  <td style={{ padding:"8px 10px", whiteSpace:"nowrap" }} onClick={(e)=>e.stopPropagation()}>
+                    {changeBillId===b.id ? (
+                      <span style={{ display:"inline-flex", gap:6, alignItems:"center" }}>
+                        <Btn label="Edit" small color={T.gold} textColor={T.bg} onClick={(e)=>{ e.stopPropagation(); setEditBill(b); setChangeBillId(""); }} />
+                        <Btn label="Delete" small color={T.red} textColor="#fff" onClick={(e)=>{ e.stopPropagation(); if(window.confirm(`Delete bill ${b.billNo||""}? This frees its challans for re-billing. Cannot be undone.`)){ deleteBill(b.id, b); setChangeBillId(""); } }} />
+                        <Btn label="✕" small color={T.surface} textColor={T.steelLt} onClick={(e)=>{ e.stopPropagation(); setChangeBillId(""); }} />
+                      </span>
+                    ) : (
+                      <Btn label="Change needed" small color={T.surface} textColor={T.accent} style={{ border:`1px solid ${T.accent}55` }} onClick={(e)=>{ e.stopPropagation(); setChangeBillId(b.id); }} />
+                    )}
+                  </td>
                 </tr>
               );})}
             </tbody>
@@ -4558,6 +4696,14 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
           </table>
           </>}
 
+          {detailBill && <BillDetailModal bill={detailBill} jobberName={(jobbers.find(x=>x.id===detailBill.jobberId)||{}).name||j?.name||""} onClose={()=>setDetailBill(null)} />}
+          {editBill && <BillEditModal bill={editBill} jobberName={(jobbers.find(x=>x.id===editBill.jobberId)||{}).name||j?.name||""} onClose={()=>setEditBill(null)} onSave={async (updated) => {
+            await dbUpsert("bills", billToRow(updated));
+            setBills(p=>p.map(x=>x.id===updated.id?updated:x));
+            recordActivity(currentUser, "Edited bill", `Jobber ${j?.name||""}`, `Bill ${updated.billNo}`);
+            showToast("Bill updated ✓");
+            setEditBill(null);
+          }} />}
           {showBillForm && <BillForm jobber={j} designs={designs} selJ={selJ} suggestForDesign={suggestForDesign} challans={(challans||[]).filter(c => c.jobberId===selJ && c.status==="approved" && !c.billed && !c.halfStitch)} onClose={() => setShowBillForm(false)} onSave={async (bill, usedChallanIds) => {
         await dbUpsert("bills", billToRow(bill));
         setBills(p => [bill,...p]);
@@ -4872,6 +5018,7 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
   const [showLedger, setShowLedger] = useState(false);
   const [showSubmitBill, setShowSubmitBill] = useState(false);
   const [showNewDesign, setShowNewDesign] = useState(false);
+  const [editChallan, setEditChallan] = useState(null);
   const isStitcher = jobberDoesProcess(user, "Stitch")
     || (user.process||"").toLowerCase().includes("stitch")
     || (user.processCodes||[]).some(x => (x.process||"").toLowerCase().includes("stitch"));
@@ -4984,11 +5131,26 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
           <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, padding:14, marginBottom:16 }}>
             <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Your Challans</div>
             {(challans||[]).filter(c => c.jobberId===user.id).slice(0,10).map(c => (
-              <div key={c.id} style={{ display:"flex", gap:10, alignItems:"center", padding:"6px 0", fontSize:12, borderBottom:`1px solid ${T.border}` }}>
+              <div key={c.id} style={{ display:"flex", gap:10, alignItems:"center", padding:"6px 0", fontSize:12, borderBottom:`1px solid ${T.border}`, flexWrap:"wrap" }}>
                 <span style={{ fontFamily:T.mono, color:T.steelLt }}>{c.date}</span>
                 <span style={{ color:T.gold, fontFamily:T.mono }}>D{c.designNo}</span>
                 <span style={{ color:T.text }}>{c.qty} pcs</span>
-                <span style={{ marginLeft:"auto" }}><Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} /></span>
+                <span style={{ marginLeft:"auto", display:"flex", gap:6, alignItems:"center" }}>
+                  <Badge label={c.status} color={c.status==="approved"?T.green:c.status==="rejected"?T.red:T.orange} />
+                  {c.billed
+                    ? <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>billed</span>
+                    : c.editApproved
+                      ? <Btn label="Edit" small color={T.gold} textColor={T.bg} onClick={()=>setEditChallan(c)} />
+                      : c.editReqPending
+                        ? <span style={{ fontFamily:T.mono, fontSize:9, color:T.orange }}>edit requested…</span>
+                        : <Btn label="Request edit" small color={T.surface} textColor={T.accent} style={{ border:`1px solid ${T.accent}55` }} onClick={async()=>{
+                            const u = { ...c, editReqPending:true };
+                            await dbUpsert("challans", challanToRow(u));
+                            setChallans(p=>p.map(x=>x.id===c.id?u:x));
+                            recordNotification(user.name, `${user.name} requests to edit challan ${c.challanNo||("D"+c.designNo)} (${c.qty} pcs)`, "");
+                            showToast("Edit request sent to admin");
+                          }} />}
+                </span>
               </div>
             ))}
           </div>
@@ -5061,8 +5223,14 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         setShowChallan(false);
       }} />}
       {showLedger && <JobberLedgerModal user={user} challans={challans} payments={payments} bills={bills} onClose={()=>setShowLedger(false)} />}
-      {showSubmitBill && <JobberSubmitBillModal user={user} challans={challans} currentUser={user.name} onClose={()=>setShowSubmitBill(false)} onSubmit={async (bill) => {
+      {showSubmitBill && <JobberSubmitBillModal user={user} challans={challans} currentUser={user.name} onClose={()=>setShowSubmitBill(false)} onSubmit={async (bill, usedChallanIds) => {
         await dbUpsert("bills", billToRow(bill));
+        // mark used challans as billed so neither jobber nor admin can re-bill them
+        for (const cid of (usedChallanIds||[])) {
+          const c = (challans||[]).find(x=>x.id===cid);
+          if (c) { const u={...c, billed:true, billId:bill.id}; await dbUpsert("challans", challanToRow(u)); }
+        }
+        setChallans(p => p.map(c => (usedChallanIds||[]).includes(c.id) ? { ...c, billed:true, billId:bill.id } : c));
         recordNotification(user.name, `${user.name} submitted Bill ${bill.billNo} (Rs.${bill.total.toFixed(0)}) for approval`, "");
         showToast("Bill submitted for approval ✓");
         setShowSubmitBill(false);
@@ -5074,8 +5242,45 @@ function JobberPanel({ user, designs, setDesigns, people, challans, setChallans,
         showToast("Design created ✓ Admin can now complete it");
         setShowNewDesign(false);
       }} />}
+      {editChallan && <JobberEditChallanModal challan={editChallan} onClose={()=>setEditChallan(null)} onSave={async (updated) => {
+        const u = { ...updated, editApproved:false, editReqPending:false };
+        await dbUpsert("challans", challanToRow(u));
+        setChallans(p=>p.map(x=>x.id===u.id?u:x));
+        showToast("Challan updated ✓");
+        setEditChallan(null);
+      }} />}
       <Toast {...toast} />
     </div>
+  );
+}
+
+// ── Jobber edits own challan (qty/rate/date only, after admin approval) ────────
+function JobberEditChallanModal({ challan, onClose, onSave }) {
+  const [date, setDate] = useState(challan.date||"");
+  const [lines, setLines] = useState((challan.lines && challan.lines.length ? challan.lines : [{ designNo:challan.designNo, process:challan.process, qty:challan.qty, rate:challan.rate, amount:challan.amount, halfStitch:challan.halfStitch }]).map(l=>({...l})));
+  function updLine(i,k,v){ setLines(p => p.map((l,idx)=>{ if(idx!==i) return l; const nl={...l,[k]:v}; if(k==="qty"||k==="rate") nl.amount=(+nl.qty||0)*(+nl.rate||0); return nl; })); }
+  function doSave(){
+    const built = lines.map(l=>({ ...l, qty:+l.qty||0, rate:l.halfStitch?0:(+l.rate||0), amount:l.halfStitch?0:((+l.qty||0)*(+l.rate||0)) }));
+    onSave({ ...challan, date, lines:built, qty:built.reduce((a,l)=>a+l.qty,0), amount:built.reduce((a,l)=>a+l.amount,0) });
+  }
+  return (
+    <Modal title={`Edit Challan ${challan.challanNo||""} (qty / rate / date)`} onClose={onClose}>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.green, marginBottom:12 }}>✓ Admin approved this edit. You can change quantity, rate, and date only.</div>
+      <Inp label="Date" type="date" value={date} onChange={setDate} style={{ marginBottom:14 }} />
+      {lines.map((l,i)=>(
+        <div key={i} style={{ display:"grid", gridTemplateColumns: l.halfStitch?"1fr 1fr 80px":"1fr 1fr 80px 80px 90px", gap:8, marginBottom:10, alignItems:"end", background:T.surface, padding:10, borderRadius:8 }}>
+          <div><div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>DESIGN</div><div style={{ fontFamily:T.mono, color:T.gold, fontWeight:700 }}>D{l.designNo}</div></div>
+          <div><div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>PROCESS</div><div style={{ fontSize:12 }}>{l.process}{l.halfStitch?" (Half)":""}</div></div>
+          <Inp label="Qty" type="number" value={l.qty} onChange={v=>updLine(i,"qty",v)} />
+          {!l.halfStitch && <Inp label="Rate" type="number" value={l.rate} onChange={v=>updLine(i,"rate",v)} />}
+          {!l.halfStitch && <div><div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>AMOUNT</div><div style={{ fontFamily:T.mono, color:T.gold, fontWeight:700, paddingTop:6 }}>Rs.{(+l.amount||0)}</div></div>}
+        </div>
+      ))}
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end", marginTop:14 }}>
+        <Btn label="Cancel" onClick={onClose} color={T.surface} textColor={T.steelLt} />
+        <Btn label="Save Changes" onClick={doSave} color={T.gold} textColor={T.bg} />
+      </div>
+    </Modal>
   );
 }
 
@@ -5096,11 +5301,24 @@ function JobberNewDesignModal({ user, designs, currentUser, onClose, onCreate })
     if (!designNo.trim() || exists || saving) return;
     setSaving(true);
     const base = makePlaceholderDesign({ designNo:designNo.trim(), createdBy:currentUser }, currentUser);
+    // Build colors: one per swatch photo (so each shows as a fabric swatch on the design page).
+    // First color carries the meters. If no photos, fall back to a single meters-only color.
+    let colors = [];
+    if (photos.length > 0) {
+      colors = photos.map((src, i) => ({
+        id:`C${Date.now()}_${i}`, colorName:`Swatch ${i+1}`, colorNo:"", name:"", sleeve:"",
+        meters: i===0 ? String(meters||"") : "", metersHalf:"",
+        sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"",
+        swatch: src,
+      }));
+    } else if (meters) {
+      colors = [{ id:`C${Date.now()}`, colorName:"", colorNo:"", name:"", sleeve:"", meters:String(meters), metersHalf:"", sizes:{}, sizesHalf:{}, samples:{}, sampleFabric:[], balance:"", shrinkage:"", sampleShrinkage:"", swatch:"" }];
+    }
     const nd = {
       ...base,
       supplier: supplier.trim(),
       photos: photos.map((src,i)=>({ src, desc:`swatch ${i+1}` })),
-      colors: meters ? [{ id:`C${Date.now()}`, name:"", meters:String(meters), metersHalf:"", sizes:{}, sizesHalf:{}, sampleFabric:[], shrinkage:"", sampleShrinkage:"" }] : [],
+      colors,
       notes: `Created by stitcher ${currentUser}. Swatch photos + meters${supplier.trim()?` + supplier ${supplier.trim()}`:""} entered. Admin to complete details.`,
     };
     onCreate(nd);
@@ -5227,7 +5445,7 @@ function JobberSubmitBillModal({ user, challans, currentUser, onClose, onSubmit 
     if (!billNo || sel.length===0 || saving) return;
     setSaving(true);
     const lines = selChallans.flatMap(c => ((c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process,qty:c.qty,rate:c.rate,amount:c.amount}]).filter(l=>!l.halfStitch).map(l=>({ ...l, challanNo:c.challanNo, date:c.date })));
-    onSubmit({ id:`BILL${Date.now()}`, jobberId:user.id, billNo, billDate, lines, gross, gstPct:+gstPct, gstAmt, roundOff:0, total, hasGst, status:"pending", createdBy:currentUser, createdAtStr:nowStr() });
+    onSubmit({ id:`BILL${Date.now()}`, jobberId:user.id, billNo, billDate, lines, gross, gstPct:+gstPct, gstAmt, roundOff:0, total, hasGst, status:"pending", createdBy:currentUser, createdAtStr:nowStr() }, sel);
   }
   return (
     <Modal title="🧾 Submit Bill for Approval" onClose={onClose}>
@@ -5880,6 +6098,35 @@ ${vouchers}
                       ? <span style={{ fontFamily:T.mono, fontSize:14, color:T.textDim, fontWeight:900, letterSpacing:3, background:T.surface, padding:"4px 14px", borderRadius:6, border:`1px dashed ${T.border}` }}>{l.code} <span style={{ fontSize:8 }}>(tell user — used once)</span></span>
                       : <button onClick={async()=>{ const code=String(Math.floor(1000+Math.random()*9000)); await saveLock(setLocks, { ...l, code, codeActive:true }); }} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:6, padding:"6px 14px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Generate Code</button>}
                     <button onClick={async()=>{ await saveLock(setLocks, { ...l, reqPending:false, code:"", codeActive:false }); }} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.steelLt, borderRadius:6, padding:"6px 12px", fontFamily:T.mono, fontSize:10, cursor:"pointer" }}>Dismiss</button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+          {isAdmin && (() => {
+            const editReqs = (challans||[]).filter(c => c.editReqPending && !c.editApproved);
+            if (!editReqs.length) return null;
+            return (
+              <div style={{ background:T.accent+"11", borderRadius:10, padding:16, marginTop:16, border:`1px solid ${T.accent}` }}>
+                <div style={{ fontFamily:T.mono, fontSize:12, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:10 }}>✎ Challan Edit Requests ({editReqs.length})</div>
+                {editReqs.map(c => (
+                  <div key={c.id} style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap", padding:"8px 0", borderBottom:`1px solid ${T.border}` }}>
+                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>{(people.find(j=>j.id===c.jobberId)||{}).name||"Jobber"}</span>
+                    <span style={{ fontFamily:T.mono, fontSize:11, color:T.gold }}>D{challanDesigns(c).join(",")}</span>
+                    <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>{c.qty} pcs · {c.date}</span>
+                    <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+                      <Btn label="✓ Allow edit" small color={T.green} textColor="#fff" onClick={async()=>{
+                        const u = { ...c, editApproved:true, editReqPending:false };
+                        await dbUpsert("challans", challanToRow(u));
+                        setChallans(p=>p.map(x=>x.id===c.id?u:x));
+                        recordNotification((people.find(j=>j.id===c.jobberId)||{}).name||"", `Admin allowed you to edit challan D${c.designNo} — open it to edit qty/rate/date`, c.jobberId);
+                      }} />
+                      <Btn label="✕ Deny" small color={T.red+"22"} textColor={T.red} onClick={async()=>{
+                        const u = { ...c, editReqPending:false, editApproved:false };
+                        await dbUpsert("challans", challanToRow(u));
+                        setChallans(p=>p.map(x=>x.id===c.id?u:x));
+                      }} />
+                    </div>
                   </div>
                 ))}
               </div>
