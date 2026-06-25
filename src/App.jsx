@@ -363,14 +363,13 @@ function codeForProcess(jobber, processName) {
   if (pc) return pc.code;
   return jobber.prefix || "";
 }
-// helper: can this jobber fill the size grid? (Stitch/Cut processes, tagged, or admin)
+// helper: can this jobber fill the size grid? STRICTLY stitcher and admin only.
 function canFillSizes(jobber) {
   if (!jobber) return false;
   if (jobber.role === "admin") return true;
-  if (jobber.sizeFiller) return true;
-  const fillerProcs = ["Stitch","Cut to Pack"];
-  if ((jobber.processCodes||[]).some(x => fillerProcs.includes(x.process))) return true;
-  return fillerProcs.includes(jobber.process);
+  // only stitchers may fill sizes — no other override
+  if ((jobber.processCodes||[]).some(x => (x.process||"").toLowerCase().includes("stitch"))) return true;
+  return (jobber.process||"").toLowerCase().includes("stitch");
 }
 // helper: does jobber do this process?
 function jobberDoesProcess(jobber, processName) {
@@ -446,7 +445,8 @@ function printSection(elementId, title) {
 // Display design as Lot(Main) e.g. 3290(2083); if no lot, just main
 function designLabel(d) {
   if (!d) return "";
-  if (d.lotNo && d.lotNo !== d.designNo) return `${d.lotNo}(${d.designNo})`;
+  // Show design number first, lot number in brackets — only when a lot number is entered.
+  if (d.lotNo && String(d.lotNo).trim() && d.lotNo !== d.designNo) return `${d.designNo} (${d.lotNo})`;
   return d.designNo || "";
 }
 
@@ -1023,7 +1023,8 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
   const sizes = sortSizes(design.activeColors && design.activeColors.length ? design.activeColors : ["S","M","L","XL","XXL"], design.customSizes);
   const isAdmin = role === "admin";
   const locked = !!design.locked;
-  const canEdit = !locked;
+  const allowedToFill = isAdmin || canFillSizes(currentJobber);
+  const canEdit = !locked && allowedToFill;
   function updColor(id, k, v) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c,[k]:v} : c) }); }
   function setNotes(v) { if (!canEdit) return; onUpdate({ ...design, notes: v }); }
   function addSampleFabric(id) { if (!canEdit) return; onUpdate({ ...design, colors: design.colors.map(c => c.id===id ? {...c, sampleFabric:[...(c.sampleFabric||[]), {meters:"", date:new Date().toISOString().slice(0,10)}]} : c) }); }
@@ -1033,6 +1034,7 @@ function SizeEditor({ design, onUpdate, role, onConfirmLock, L = (x)=>x, onSendL
   const totalSample = totalSamplePcs(design);
   return (
     <div style={{ fontFamily:T.sans, fontSize:12 }}>
+      {!allowedToFill && <div style={{ background:T.orange+"22", border:`1px solid ${T.orange}`, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.orange }}>👁 View only — only the stitcher and admin can fill sizes for this design.</div>}
       {locked
         ? <div style={{ background:T.green+"22", border:`1px solid ${T.green}`, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.green }}>🔒 Confirmed & locked by {design.lockedBy||"jobber"} · {design.lockedAtStr||""}. {isAdmin?"Tap Unlock below to edit.":"Only admin can unlock & change now."}</div>
         : <div style={{ background:T.surface, borderRadius:8, padding:12, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Fill TOTAL quantities per size for each colour. Tap Show Detailed Report to enter Samples (auto-calculates Dispatch). When done, tap <b style={{color:T.gold}}>Confirm & Lock</b>.</div>
@@ -2674,7 +2676,6 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                   </div>
                 );
               })()}
-              <div style={{ display:"none" }}>
               {/* This bill also covers other designs (split meters) */}
               <div style={{ background:T.bg, borderRadius:6, padding:10, marginTop:8, marginBottom:8 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
@@ -2699,7 +2700,6 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                   </div>
                 ))}
                 <datalist id={`designs-${b.id}`}>{designs && designs.map(dd => <option key={dd.id} value={dd.designNo} />)}</datalist>
-              </div>
               </div>
               <Btn label="✕ Remove this bill" onClick={() => removeFabricBill(b.id)} color={T.red+"22"} textColor={T.red} small />
             </div>
@@ -3350,6 +3350,9 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
   function setProcessCode(pn, code) {
     setForm(f => ({ ...f, processCodes: (f.processCodes||[]).map(x => x.process===pn ? {...x, code} : x) }));
   }
+  function setProcessNote(pn, note) {
+    setForm(f => ({ ...f, processCodes: (f.processCodes||[]).map(x => x.process===pn ? {...x, note} : x) }));
+  }
 
   async function save() {
     if (!form.name.trim()) { showToast("Name is required","error"); return; }
@@ -3416,7 +3419,7 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
                 <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" }}>
                   <Badge label={j.role==="team"?"TEAM":"JOBBER"} color={j.role==="team"?T.steelLt:T.gold} />
                   {(j.processCodes||[]).length>0
-                    ? (j.processCodes||[]).map(pc => <Badge key={pc.process} label={`${pc.process} ${pc.code}`} color={T.steel} />)
+                    ? (j.processCodes||[]).map(pc => <Badge key={pc.process} label={`${pc.process}${pc.code?` ${pc.code}`:""}${pc.note?` · ${pc.note}`:""}`} color={T.steel} />)
                     : (j.process && <Badge label={j.process} color={T.steel} />)}
                 </div>
               </div>
@@ -3473,13 +3476,15 @@ function PeopleManager({ people, setPeople, designs, showToast, currentUser }) {
                 {PROCESSES.filter(p => p!=="Fabric").map(pn => {
                   const checked = (form.processCodes||[]).some(x => x.process===pn);
                   const code = (form.processCodes||[]).find(x => x.process===pn)?.code || "";
+                  const note = (form.processCodes||[]).find(x => x.process===pn)?.note || "";
                   return (
                     <div key={pn} style={{ background:T.surface, borderRadius:6, padding:"8px 10px", border:`1px solid ${checked?T.gold+"66":T.border}` }}>
                       <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", color:T.text, fontSize:12, marginBottom:checked?6:0 }}>
                         <input type="checkbox" checked={checked} onChange={() => toggleProcess(pn)} style={{ accentColor:T.gold, width:14, height:14 }} />
                         {pn}
                       </label>
-                      {checked && <input value={code} onChange={e => setProcessCode(pn, e.target.value)} placeholder="code e.g. 13" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.gold, fontFamily:T.mono, fontSize:12, padding:"5px 8px", width:"100%", boxSizing:"border-box" }} />}
+                      {checked && <input value={code} onChange={e => setProcessCode(pn, e.target.value)} placeholder="code e.g. 13" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.gold, fontFamily:T.mono, fontSize:12, padding:"5px 8px", width:"100%", boxSizing:"border-box", marginBottom:6 }} />}
+                      {checked && <input value={note} onChange={e => setProcessNote(pn, e.target.value)} placeholder="what under this? e.g. embroidery" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontFamily:T.sans, fontSize:11, padding:"5px 8px", width:"100%", boxSizing:"border-box" }} />}
                     </div>
                   );
                 })}
