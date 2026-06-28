@@ -5363,6 +5363,7 @@ function JobberNewDesignModal({ user, designs, currentUser, onClose, onCreate })
 
 // ── Jobber Ledger (read-only account view) ────────────────────────────────────
 function JobberLedgerModal({ user, challans, payments, bills = [], onClose }) {
+  const [expandedBill, setExpandedBill] = useState("");
   // earned = full (non-half) challan amounts done by this jobber
   const myChallans = (challans||[]).filter(c => c.jobberId===user.id && c.status!=="rejected");
   const rows = [];
@@ -5410,15 +5411,41 @@ function JobberLedgerModal({ user, challans, payments, bills = [], onClose }) {
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.accent, textTransform:"uppercase", marginBottom:8 }}>Bills</div>
       <div style={{ maxHeight:140, overflow:"auto", marginBottom:16 }}>
         {myBills.length===0 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>No bills yet.</div> :
-          myBills.map((b,i)=>(
-            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, padding:"6px 0", borderTop:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:11, flexWrap:"wrap" }}>
-              <span style={{ color:T.steelLt }}>Bill {b.billNo} · {b.billDate}</span>
-              <span style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <Badge label={b.status==="pending"?"awaiting approval":"approved"} color={b.status==="pending"?T.orange:T.green} />
-                <b style={{ color:T.gold }}>Rs.{(+b.total||0).toFixed(0)}</b>
-              </span>
+          myBills.map((b,i)=>{
+            const open = expandedBill===b.id;
+            const groups = {};
+            (b.lines||[]).forEach(l => { const k=l.challanNo||"—"; if(!groups[k]) groups[k]={challanNo:k,date:l.date||"",rows:[]}; if(!groups[k].date&&l.date) groups[k].date=l.date; groups[k].rows.push(l); });
+            return (
+            <div key={i} style={{ borderTop:`1px solid ${T.border}` }}>
+              <div onClick={()=>setExpandedBill(open?"":b.id)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, padding:"6px 0", fontFamily:T.mono, fontSize:11, flexWrap:"wrap", cursor:"pointer" }}>
+                <span style={{ color:T.gold, textDecoration:"underline" }}>{open?"▾":"▸"} Bill {b.billNo} · {b.billDate}</span>
+                <span style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  <Badge label={b.status==="pending"?"awaiting approval":"approved"} color={b.status==="pending"?T.orange:T.green} />
+                  <b style={{ color:T.gold }}>Rs.{(+b.total||0).toFixed(0)}</b>
+                </span>
+              </div>
+              {open && <div style={{ background:T.surface, borderRadius:6, padding:8, marginBottom:6 }}>
+                {Object.values(groups).map((g,gi)=>{
+                  const sub=g.rows.reduce((a,l)=>a+(+l.amount||0),0);
+                  return (
+                  <div key={gi} style={{ marginBottom:6 }}>
+                    <div style={{ fontFamily:T.mono, fontSize:10, color:T.accent, fontWeight:700 }}>Challan {g.challanNo} · {g.date}</div>
+                    {g.rows.map((l,ri)=>(
+                      <div key={ri} style={{ display:"flex", gap:8, fontFamily:T.mono, fontSize:10, color:T.text, padding:"2px 0" }}>
+                        <span style={{ color:T.gold, minWidth:50 }}>D{l.designNo}</span>
+                        <span style={{ color:T.steelLt, flex:1 }}>{l.process||"—"}</span>
+                        <span>{l.qty} pcs</span>
+                        <span>Rs.{l.rate}</span>
+                        <span style={{ fontWeight:700, minWidth:60, textAlign:"right" }}>Rs.{(+l.amount||0).toFixed(0)}</span>
+                      </div>
+                    ))}
+                    <div style={{ fontFamily:T.mono, fontSize:9, color:T.green, textAlign:"right" }}>Subtotal Rs.{sub.toFixed(0)}</div>
+                  </div>
+                  );
+                })}
+              </div>}
             </div>
-          ))}
+          );})}
       </div>
       <div style={{ fontFamily:T.mono, fontSize:10, color:T.green, textTransform:"uppercase", marginBottom:8 }}>Payments received</div>
       <div style={{ maxHeight:140, overflow:"auto" }}>
