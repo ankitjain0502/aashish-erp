@@ -1913,10 +1913,10 @@ function makePlaceholderDesign(challan, currentUser) {
 }
 
 function challanToRow(c) {
-  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"", edit_req_pending:!!c.editReqPending, edit_approved:!!c.editApproved, edited_once:!!c.editedOnce };
+  return { id:c.id, jobber_id:c.jobberId||"", design_no:c.designNo||"", process:c.process||"", qty:c.qty||0, rate:c.rate||0, amount:c.amount||0, lines:c.lines||[], date:c.date||"", received_date:c.receivedDate||"", sent_date:c.sentDate||"", received_from:c.receivedFrom||"", challan_no:c.challanNo||"", photo:c.photo||"", status:c.status||"pending", billed:!!c.billed, bill_id:c.billId||"", send_to_id:c.sendToId||"", is_split:!!c.isSplit, gst_pct:c.gstPct??0, half_stitch:!!c.halfStitch, created_by:c.createdBy||"", created_at_str:c.createdAtStr||"", edit_req_pending:!!c.editReqPending, edit_approved:!!c.editApproved, edited_once:!!c.editedOnce, edit_reason:c.editReason||"" };
 }
 function rowToChallan(r) {
-  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", editReqPending:!!r.edit_req_pending, editApproved:!!r.edit_approved, editedOnce:!!r.edited_once };
+  const c = { id:r.id, jobberId:r.jobber_id||"", designNo:r.design_no||"", process:r.process||"", qty:r.qty||0, rate:r.rate||0, amount:r.amount||0, lines:r.lines||[], date:r.date||"", receivedDate:r.received_date||"", sentDate:r.sent_date||"", receivedFrom:r.received_from||"", challanNo:r.challan_no||"", photo:r.photo||"", status:r.status||"pending", billed:!!r.billed, billId:r.bill_id||"", sendToId:r.send_to_id||"", isSplit:!!r.is_split, gstPct:r.gst_pct??0, halfStitch:!!r.half_stitch, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"", editReqPending:!!r.edit_req_pending, editApproved:!!r.edit_approved, editedOnce:!!r.edited_once, editReason:r.edit_reason||"" };
   // back-compat: if no lines array but has single design, synthesize one line
   if ((!c.lines || c.lines.length===0) && c.designNo) c.lines = [{ designNo:c.designNo, process:c.process, qty:c.qty, rate:c.rate, amount:c.amount }];
   return c;
@@ -5664,6 +5664,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
   const [editing, setEditing] = useState(false);
   const [toast, setToast] = useState({ msg:"", type:"" });
   const [search, setSearch] = useState("");
+  const [jobberDesignTab, setJobberDesignTab] = useState("ongoing");
   const [showCompleted, setShowCompleted] = useState(false);
   const [monthFilter, setMonthFilter] = useState("");
   function showToast(msg, type="success") { setToast({msg,type}); setTimeout(() => setToast({msg:"",type:""}), 3000); }
@@ -6122,15 +6123,19 @@ ${vouchers}
               <div style={{ background:T.accent+"11", borderRadius:10, padding:16, marginTop:16, border:`1px solid ${T.accent}` }}>
                 <div style={{ fontFamily:T.mono, fontSize:12, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:10 }}>✎ Challan Edit Requests ({editReqs.length})</div>
                 {editReqs.map(c => (
-                  <div key={c.id} style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap", padding:"8px 0", borderBottom:`1px solid ${T.border}` }}>
-                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>{(people.find(j=>j.id===c.jobberId)||{}).name||"Jobber"}</span>
-                    <span style={{ fontFamily:T.mono, fontSize:11, color:T.gold }}>D{challanDesigns(c).join(",")}</span>
-                    <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>{c.qty} pcs · {c.date}</span>
-                    <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+                  <div key={c.id} style={{ padding:"10px 0", borderBottom:`1px solid ${T.border}` }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap", marginBottom:8 }}>
+                      <span style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>{(people.find(j=>j.id===c.jobberId)||{}).name||"Jobber"}</span>
+                      <span style={{ fontFamily:T.mono, fontSize:11, color:T.gold }}>D{challanDesigns(c).join(",")}</span>
+                      <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>{c.qty} pcs · {c.date}</span>
+                    </div>
+                    <input value={c.editReason||""} onChange={async e=>{ const u={...c, editReason:e.target.value}; setChallans(p=>p.map(x=>x.id===c.id?u:x)); }} onBlur={async e=>{ const u={...c, editReason:e.target.value}; await dbUpsert("challans", challanToRow(u)); }} placeholder="Reason for editing (describe here)…" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:12, padding:"7px 10px", width:"100%", boxSizing:"border-box", marginBottom:8 }} />
+                    <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
                       <Btn label="✓ Allow edit" small color={T.green} textColor="#fff" onClick={async()=>{
                         const u = { ...c, editApproved:true, editReqPending:false };
                         await dbUpsert("challans", challanToRow(u));
                         setChallans(p=>p.map(x=>x.id===c.id?u:x));
+                        recordActivity(currentUser, "Allowed challan edit", `D${c.designNo} · ${(people.find(j=>j.id===c.jobberId)||{}).name||""}`, c.editReason?`Reason: ${c.editReason}`:"");
                         recordNotification((people.find(j=>j.id===c.jobberId)||{}).name||"", `Admin allowed you to edit challan D${c.designNo} — open it to edit qty/rate/date`, c.jobberId);
                       }} />
                       <Btn label="✕ Deny" small color={T.red+"22"} textColor={T.red} onClick={async()=>{
@@ -6248,23 +6253,85 @@ ${vouchers}
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by Design No, Brand or Style..." style={{ background:T.card, border:`2px solid ${T.gold}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:15, padding:"12px 18px", width:"100%", boxSizing:"border-box", outline:"none", marginBottom:20 }} />
             {search.length > 1 && searchResults.length === 0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>No designs found.</div>}
             {searchResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"6px 0" }}>Designs</div>}
-            {searchResults.map(d => (
+            {searchResults.map(d => {
+              // gather all jobbers who worked on this design (from challans) — name + process + qty + date
+              const work = [];
+              (challans||[]).forEach(c => {
+                if (c.status==="rejected") return;
+                if (!challanDesigns(c).includes(String(d.designNo))) return;
+                const lns = (c.lines&&c.lines.length)?c.lines:[{designNo:c.designNo,process:c.process,qty:c.qty}];
+                lns.forEach(l => {
+                  if (String(l.designNo)!==String(d.designNo)) return;
+                  const who = (people.find(j=>j.id===(l.sentToId||c.sendToId||c.jobberId))||{}).name || "—";
+                  work.push({ who, process:l.process||c.process||"—", qty:l.qty||c.qty||0, date:c.date||"" });
+                });
+              });
+              return (
               <div key={d.id} style={{ background:T.card, borderRadius:10, padding:18, marginBottom:12, border:`1px solid ${T.border}`, cursor:"pointer" }} onClick={() => setSel(d)}>
                 <span style={{ fontFamily:T.mono, fontSize:22, fontWeight:900, color:T.gold }}>{designLabel(d)}</span>
                 <span style={{ color:T.white, fontWeight:600, marginLeft:16 }}>{d.brand}</span>
                 <span style={{ color:T.steelLt, marginLeft:12 }}>Style: {d.style}</span>
                 {d.keywords && <span style={{ color:T.gold, marginLeft:12, fontSize:12, fontStyle:"italic" }}>🏷 {d.keywords}</span>}
+                {work.length>0 && <div style={{ marginTop:10, borderTop:`1px solid ${T.border}`, paddingTop:8 }}>
+                  <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:4 }}>Jobbers who worked on this design</div>
+                  {work.map((w,i)=>(
+                    <div key={i} style={{ fontFamily:T.mono, fontSize:11, color:T.text, display:"flex", gap:10, flexWrap:"wrap", padding:"2px 0" }}>
+                      <span style={{ color:T.accent, fontWeight:700, minWidth:90 }}>{w.who}</span>
+                      <span style={{ color:T.steelLt }}>{w.process}</span>
+                      <span>{w.qty} pcs</span>
+                      <span style={{ color:T.steelLt }}>{w.date}</span>
+                    </div>
+                  ))}
+                </div>}
               </div>
-            ))}
-            {isAdmin && peopleResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"12px 0 6px" }}>People</div>}
-            {isAdmin && peopleResults.map(p => (
+            );})}
+            {isAdmin && peopleResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"12px 0 6px" }}>People — designs they're working on</div>}
+            {isAdmin && peopleResults.map(p => {
+              // designs this jobber is on (via process assignment or challan)
+              const theirDesigns = designs.filter(d =>
+                PROCESSES.some(pr => d.processes?.[pr]?.jobber===p.id) ||
+                (challans||[]).some(c => c.status!=="rejected" && challanDesigns(c).includes(String(d.designNo)) && (c.jobberId===p.id || c.sendToId===p.id || (c.lines||[]).some(l=>l.sentToId===p.id)))
+              );
+              // completed = this jobber dispatched full qty (his sent qty >= received qty) OR design status Completed
+              function isDoneFor(d) {
+                if (d.status==="Completed") return true;
+                // check challans: for this jobber, has he sent everything he received for this design?
+                let recd=0, sent=0;
+                (challans||[]).forEach(c => {
+                  if (c.status==="rejected" || !challanDesigns(c).includes(String(d.designNo))) return;
+                  (c.lines||[{designNo:c.designNo,qty:c.qty,sentToId:c.sendToId}]).forEach(l=>{
+                    if (String(l.designNo)!==String(d.designNo)) return;
+                    if (l.sentToId===p.id || c.sendToId===p.id) recd += (+l.qty||+c.qty||0);
+                    if (c.jobberId===p.id) sent += (+l.qty||+c.qty||0);
+                  });
+                });
+                return recd>0 && sent>=recd;
+              }
+              const ongoing = theirDesigns.filter(d=>!isDoneFor(d));
+              const completed = theirDesigns.filter(d=>isDoneFor(d));
+              const view = jobberDesignTab==="completed"?completed : jobberDesignTab==="ongoing"?ongoing : theirDesigns;
+              return (
               <div key={p.id} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10, border:`1px solid ${T.border}` }}>
-                <span style={{ color:T.white, fontWeight:700 }}>{p.name}</span>
-                <Badge label={p.role==="team"?"TEAM":"JOBBER"} color={p.role==="team"?T.steelLt:T.gold} />
-                {p.process && <span style={{ color:T.steelLt, marginLeft:8, fontSize:12 }}>{p.process}</span>}
-                {p.prefix && <span style={{ color:T.gold, fontFamily:T.mono, marginLeft:8, fontSize:12 }}>code {p.prefix}</span>}
+                <div style={{ marginBottom:8 }}>
+                  <span style={{ color:T.white, fontWeight:700 }}>{p.name}</span>
+                  <Badge label={p.role==="team"?"TEAM":"JOBBER"} color={p.role==="team"?T.steelLt:T.gold} />
+                  {(p.processCodes||[]).map(pc=><Badge key={pc.process} label={pc.process} color={T.steel} />)}
+                </div>
+                <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+                  {[["ongoing",`Ongoing (${ongoing.length})`],["completed",`Completed (${completed.length})`],["all",`All (${theirDesigns.length})`]].map(([v,lbl])=>(
+                    <button key={v} onClick={()=>setJobberDesignTab(v)} style={{ background:jobberDesignTab===v?T.gold:T.surface, color:jobberDesignTab===v?T.bg:T.steelLt, border:"none", borderRadius:16, padding:"4px 12px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>{lbl}</button>
+                  ))}
+                </div>
+                {view.length===0 ? <div style={{ fontFamily:T.mono, fontSize:11, color:T.textDim }}>No designs in this category.</div>
+                : view.map(d=>(
+                  <div key={d.id} onClick={()=>setSel(d)} style={{ display:"flex", gap:10, alignItems:"center", padding:"6px 0", borderTop:`1px solid ${T.border}`, cursor:"pointer" }}>
+                    <span style={{ fontFamily:T.mono, fontWeight:700, color:T.gold }}>{designLabel(d)}</span>
+                    <span style={{ color:T.text, fontSize:12 }}>{d.brand}</span>
+                    <Badge label={isDoneFor(d)?"Completed":"Ongoing"} color={isDoneFor(d)?T.green:T.orange} />
+                  </div>
+                ))}
               </div>
-            ))}
+            );})}
             {isAdmin && fabricSupplierResults.length > 0 && <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", margin:"12px 0 6px" }}>Fabric Suppliers</div>}
             {isAdmin && fabricSupplierResults.map(name => {
               const bills = designs.flatMap(d => (d.supplierBills||[]).filter(b=>b.supplier===name).map(b=>({...b,designNo:b.designNo||d.designNo})));
