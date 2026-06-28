@@ -4015,9 +4015,9 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
   function lineInfo(ln) {
     const amount = (+ln.qty||0) * (+ln.rate||0);
     const designExists = designs.some(d => String(d.designNo) === String(ln.designNo).trim());
-    const isNewDesign = ln.newDesign && ln.designNo.trim() && !designExists;
-    // A typed design number that does NOT exist and is NOT marked as new = invalid (random number).
-    const unknownDesign = ln.designNo.trim() && !designExists && !ln.newDesign;
+    const isNewDesign = false; // design creation removed from challan — must pick existing design
+    // A typed design number that does NOT exist = invalid (cannot create design from challan).
+    const unknownDesign = ln.designNo.trim() && !designExists;
     const dup = (ln.designNo && ln.process)
       ? challans.find(c => challanDesigns(c).includes(String(ln.designNo).trim()) && (c.lines||[]).concat([{process:c.process}]).some(x=>x.process===ln.process) && c.status!=="rejected" && c.jobberId!==head.jobberId)
       : null;
@@ -4153,11 +4153,8 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               <div style={{ display:"flex", flexDirection:"column", gap:4, flex:"2 1 140px" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Design No *</label>
-                  {mayCreateDesign && <button onClick={() => { updLine(ln.id,"newDesign",!ln.newDesign); updLine(ln.id,"designNo",""); }} style={{ background:"none", border:"none", color:T.gold, fontFamily:T.mono, fontSize:8, cursor:"pointer", textTransform:"uppercase" }}>{ln.newDesign?"pick existing":"+ new"}</button>}
                 </div>
-                {ln.newDesign
-                  ? <input value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} placeholder="New design no" style={{ background:T.bg, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
-                  : <>
+                {<>
                     <input list={`chdl-${ln.id}`} value={ln.designNo} onChange={e => updLine(ln.id,"designNo",e.target.value)} placeholder="type design no or pick" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
                     <datalist id={`chdl-${ln.id}`}>
                       {availableDesigns.map(d => <option key={d.id} value={d.designNo}>{designLabel(d)}</option>)}
@@ -4203,25 +4200,6 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               {lines.length>1 && <Btn label="✕" onClick={() => removeLine(ln.id)} color={T.red+"22"} textColor={T.red} small />}
             </div>
             {/* Fabric details for a NEW design created via challan */}
-            {ln.newDesign && ln.designNo.trim() && (
-              <div style={{ background:T.accent+"0D", border:`1px solid ${T.accent}44`, borderRadius:8, padding:10, marginTop:8 }}>
-                <div style={{ fontFamily:T.mono, fontSize:9, color:T.accent, textTransform:"uppercase", fontWeight:700, marginBottom:8 }}>New design — add colour swatches (admin can complete rest later)</div>
-                <div style={{ marginBottom:8 }}>
-                  <Inp label="Fabric Supplier (name)" value={ln.fabSupplier||""} onChange={v => updLine(ln.id,"fabSupplier",v)} />
-                </div>
-                {(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}]).map((col,ci)=>(
-                  <div key={col.id||ci} style={{ display:"flex", gap:8, alignItems:"flex-start", background:T.surface, borderRadius:6, padding:8, marginBottom:6 }}>
-                    <button onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*"; inp.capture="environment"; inp.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) compressSwatch(f).then(src=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],swatch:src}; updLine(ln.id,"fabColors",arr); }).catch(()=>{}); }; inp.click(); }} style={{ width:48, height:48, flexShrink:0, borderRadius:6, border:`2px dashed ${T.accent}66`, background:col.swatch?`url(${col.swatch}) center/cover`:T.bg, color:T.accent, fontSize:18, cursor:"pointer" }}>{col.swatch?"":"+"}</button>
-                    <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-                      <Inp label={`Colour ${ci+1}`} value={col.name} onChange={v=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],name:v}; updLine(ln.id,"fabColors",arr); }} />
-                      <Inp label="Meters" type="number" value={col.meters} onChange={v=>{ const arr=[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}])]; arr[ci]={...arr[ci],meters:v}; updLine(ln.id,"fabColors",arr); }} />
-                    </div>
-                    {(ln.fabColors||[]).length>1 && <button onClick={()=>updLine(ln.id,"fabColors",(ln.fabColors||[]).filter((_,x)=>x!==ci))} style={{ background:T.red+"22", color:T.red, border:"none", borderRadius:5, padding:"4px 7px", cursor:"pointer", fontSize:10 }}>✕</button>}
-                  </div>
-                ))}
-                <button onClick={()=>updLine(ln.id,"fabColors",[...(ln.fabColors||[{id:"c0",name:"",meters:"",swatch:""}]),{id:`c${Date.now()}`,name:"",meters:"",swatch:""}])} style={{ background:T.surface, border:`1px solid ${T.accent}55`, color:T.accent, borderRadius:6, padding:"5px 10px", fontFamily:T.mono, fontSize:10, fontWeight:700, cursor:"pointer" }}>+ Add another colour</button>
-              </div>
-            )}
             {/* Per-design received/sent tracking */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginTop:8 }}>
               <Inp label="Received From" value={ln.receivedFrom||""} onChange={v => updLine(ln.id,"receivedFrom",v)} placeholder="who sent it" />
@@ -4269,7 +4247,7 @@ function ChallanForm({ jobbers, designs, challans = [], role, currentUser, onClo
               );
             })()}
             {info.isNewDesign && <div style={{ fontFamily:T.mono, fontSize:9, color:T.green, marginTop:6 }}>✓ New placeholder design "{ln.designNo}" will be created.</div>}
-            {info.unknownDesign && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:6, fontWeight:700 }}>⚠ Design "{ln.designNo}" does not exist. Pick an existing design from the list, or tap "+ new" to create it. You cannot make a challan for a random number.</div>}
+            {info.unknownDesign && <div style={{ fontFamily:T.mono, fontSize:10, color:T.red, marginTop:6, fontWeight:700 }}>⚠ Design "{ln.designNo}" does not exist. Pick an existing design from the list. To create a new design, use the "+ New Design" button first (stitcher) or ask admin.</div>}
             {info.dup && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontFamily:T.mono, fontSize:10, color:info.dupBlocked?T.red:T.green, fontWeight:700 }}>⚠ {dupName} already logged "{ln.process}" on design {ln.designNo}.</div>
