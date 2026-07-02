@@ -1267,7 +1267,8 @@ function SupplierBills({ design, onUpdate, role, allSuppliers = [], locks = [], 
   const [lightbox, setLightbox] = useState(null);
   const bills = design.supplierBills || [];
   function updBill(id,k,v){ if(!canEdit) return; onUpdate({ ...design, supplierBills:bills.map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; }) }); }
-  function addBill(){ onUpdate({ ...design, supplierBills:[...bills, { id:`B${Date.now()}`, designNo:design.designNo, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", transporter:"", transportCost:"", qty:"", rate:"", amount:"", gstRate:"", gstType:"CGST+SGST", roundOff:"", photo:"" }] }); }
+  function addBill(){ onUpdate({ ...design, supplierBills:[...bills, { id:`B${Date.now()}`, designNo:design.designNo, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", transporter:"", transportCost:"", qty:"", rate:"", amount:"", hasGst:false, gstRate:"", gstType:"CGST+SGST", roundOff:"", photo:"" }] }); }
+  function toggleGst(id, on){ if(!canEdit) return; onUpdate({ ...design, supplierBills:bills.map(b => b.id!==id ? b : { ...b, hasGst:on, gstRate: on ? (b.gstRate||"") : "" }) }); }
   function removeBill(id){ if(!window.confirm("Delete this bill?")) return; onUpdate({ ...design, supplierBills:bills.filter(b => b.id!==id) }); }
   function billPhoto(id,file){ if(!file) return; compressImage(file).then(src => updBill(id,"photo",src)).catch(()=>{}); }
   const totalAmt = bills.reduce((a,b) => a+billTotalWithGST(b), 0);
@@ -1290,9 +1291,15 @@ function SupplierBills({ design, onUpdate, role, allSuppliers = [], locks = [], 
             <Inp label="LR No" value={b.lrNo} onChange={v => updBill(b.id,"lrNo",v)} />
             <Inp label="Transporter" value={b.transporter||""} onChange={v => updBill(b.id,"transporter",v)} placeholder="transporter name" />
             <Inp label="Transport Cost (Rs.)" type="number" value={b.transportCost||""} onChange={v => updBill(b.id,"transportCost",v)} placeholder="freight cost" />
-            <Inp label="GST %" value={b.gstRate||""} onChange={v => updBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
-            <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
-            <Inp label="Round Off (Rs.)" type="number" value={b.roundOff??""} onChange={v => updBill(b.id,"roundOff",v)} placeholder="auto" />
+            <label style={{ gridColumn:"1 / -1", display:"flex", alignItems:"center", gap:8, fontFamily:T.mono, fontSize:11, color:T.text, cursor: canEdit?"pointer":"default", padding:"4px 0" }}>
+              <input type="checkbox" checked={!!(b.hasGst || +b.gstRate>0)} onChange={e => toggleGst(b.id, e.target.checked)} disabled={!canEdit} style={{ width:16, height:16, accentColor:T.gold }} />
+              GST लगेगा? (bina GST wale bill ke liye unchecked rakho)
+            </label>
+            {(b.hasGst || +b.gstRate>0) && <>
+              <Inp label="GST %" value={b.gstRate||""} onChange={v => updBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
+              <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
+              <Inp label="Round Off (Rs.)" type="number" value={b.roundOff??""} onChange={v => updBill(b.id,"roundOff",v)} placeholder="auto" />
+            </>}
           </div>
           {(+b.gstRate>0 && +b.amount>0) && (() => {
             const taxable = +b.amount||0, rate = +b.gstRate||0;
@@ -2432,11 +2439,19 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
   function addColor() { setD(f => ({...f, colors:[...f.colors, {id:`C${Date.now()}`,colorName:"",colorNo:"",sleeve:"",meters:"",sizes:{},samples:{},sampleFabric:[],balance:"",swatch:""}]})); }
   function updColor(id,k,v) { setD(f => ({...f, colors:f.colors.map(c => c.id===id?{...c,[k]:v}:c)})); }
   function removeColor(id) { setD(f => ({...f, colors:f.colors.filter(c => c.id!==id)})); }
-  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", photo:"", appliesTo:[]}]})); }
+  function addFabricBill() { setD(f => ({...f, supplierBills:[...(f.supplierBills||[]), {id:`B${Date.now()}`, billType:"Fabric", supplier:"", billNo:"", billDate:"", lrNo:"", qty:"", rate:"", amount:"", hasGst:false, photo:"", appliesTo:[]}]})); }
+  // swatch (colour) meters for any design number — used to auto-fill fabric-used meters
+  function swatchMetersOf(dno){ const t=String(dno||"").trim(); if(!t) return null; if(String(d.designNo||"").trim()===t) return (d.colors||[]).reduce((a,c)=>a+(+c.meters||0),0); const dd=(designs||[]).find(x=>String(x.designNo).trim()===t); return dd?(dd.colors||[]).reduce((a,c)=>a+(+c.meters||0),0):null; }
   function updFabricBill(id,k,v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => { if(b.id!==id) return b; const nb={...b,[k]:v}; if(k==="qty"||k==="rate") nb.amount=((+nb.qty||0)*(+nb.rate||0))||""; return nb; })})); }
   function removeFabricBill(id) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).filter(b => b.id!==id)})); }
   function addBillDesign(billId) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:[...(b.appliesTo||[]), {designNo:"", meters:""}]} : b)})); }
-  function updBillDesign(billId, idx, k, v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:(b.appliesTo||[]).map((x,i)=>i===idx?{...x,[k]:v}:x)} : b)})); }
+  function updBillDesign(billId, idx, k, v) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id!==billId ? b : {...b, appliesTo:(b.appliesTo||[]).map((x,i)=>{
+    if(i!==idx) return x;
+    const nx={...x,[k]:v};
+    if(k==="designNo"){ const sm=swatchMetersOf(v); if(sm!=null && (nx.meters===""||nx.meters==null)) nx.meters=sm; }   // auto meters from swatch
+    if(k==="meters"||k==="rate") nx.amount=((+nx.meters||0)*(+nx.rate||0))||"";
+    return nx;
+  })} )})); }
   function removeBillDesign(billId, idx) { setD(f => ({...f, supplierBills:(f.supplierBills||[]).map(b => b.id===billId ? {...b, appliesTo:(b.appliesTo||[]).filter((x,i)=>i!==idx)} : b)})); }
   function fabricBillPhoto(id, file) { if(!file) return; compressImage(file).then(src => updFabricBill(id,"photo",src)).catch(()=>{}); }
   function toggleSize(s) { setD(f => ({...f, activeColors:f.activeColors.includes(s)?f.activeColors.filter(x=>x!==s):[...f.activeColors,s]})); }
@@ -2652,9 +2667,15 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                 <Inp label="LR No" value={b.lrNo} onChange={v => updFabricBill(b.id,"lrNo",v)} />
                 <Inp label="Transporter" value={b.transporter||""} onChange={v => updFabricBill(b.id,"transporter",v)} placeholder="transporter name" />
                 <Inp label="Transport Cost (Rs.)" type="number" value={b.transportCost||""} onChange={v => updFabricBill(b.id,"transportCost",v)} placeholder="freight cost" />
-                <Inp label="GST %" value={b.gstRate||""} onChange={v => updFabricBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
-                <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updFabricBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
-                <Inp label="Round Off (Rs.)" type="number" value={b.roundOff??""} onChange={v => updFabricBill(b.id,"roundOff",v)} placeholder="auto" />
+                <label style={{ gridColumn:"1 / -1", display:"flex", alignItems:"center", gap:8, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer", padding:"4px 0" }}>
+                  <input type="checkbox" checked={!!(b.hasGst || +b.gstRate>0)} onChange={e => { const on=e.target.checked; updFabricBill(b.id,"hasGst",on); if(!on) updFabricBill(b.id,"gstRate",""); }} style={{ width:16, height:16, accentColor:T.gold }} />
+                  GST लगेगा? (bina GST wale bill ke liye unchecked rakho)
+                </label>
+                {(b.hasGst || +b.gstRate>0) && <>
+                  <Inp label="GST %" value={b.gstRate||""} onChange={v => updFabricBill(b.id,"gstRate",v)} options={["","5","12","18","28"]} />
+                  <Inp label="GST Type" value={b.gstType||"CGST+SGST"} onChange={v => updFabricBill(b.id,"gstType",v)} options={["CGST+SGST","IGST"]} />
+                  <Inp label="Round Off (Rs.)" type="number" value={b.roundOff??""} onChange={v => updFabricBill(b.id,"roundOff",v)} placeholder="auto" />
+                </>}
               </div>
               {/* GST breakdown — amount entered is taxable (before GST); GST added on top */}
               {(+b.gstRate>0 && +b.amount>0) && (() => {
@@ -2682,23 +2703,42 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
                   <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>This bill also covers other designs (split meters)</span>
                   <Btn label="+ add design" onClick={() => addBillDesign(b.id)} small color={T.surface} textColor={T.gold} style={{ border:`1px solid ${T.border}` }} />
                 </div>
-                <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:6 }}>
-                  This design ({d.designNo||"current"}): <b style={{color:T.gold}}>{b.qty||0} m</b>
-                  {(b.appliesTo||[]).length>0 && <span> &nbsp;· others below &nbsp;· grand total: <b style={{color:T.gold}}>{((+b.qty||0)+(b.appliesTo||[]).reduce((a,x)=>a+(+x.meters||0),0))} m</b></span>}
-                </div>
-                {(b.appliesTo||[]).map((ad,adi) => (
-                  <div key={adi} style={{ display:"flex", gap:8, alignItems:"flex-end", marginBottom:6 }}>
-                    <div style={{ display:"flex", flexDirection:"column", gap:3, flex:2 }}>
+                {(() => {
+                  const thisSw = (d.colors||[]).reduce((a,c)=>a+(+c.meters||0),0);
+                  const thisMatch = Math.abs((+b.qty||0)-thisSw)<0.01 && thisSw>0;
+                  return (
+                    <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:6 }}>
+                      This design ({d.designNo||"current"}): bill <b style={{color:T.gold}}>{b.qty||0} m</b> · swatch <b style={{color: thisMatch?T.green:T.red}}>{thisSw} m</b> {thisSw>0 && (thisMatch?"✓":"⚠")}
+                      {(b.appliesTo||[]).length>0 && <span> &nbsp;· grand total: <b style={{color:T.gold}}>{((+b.qty||0)+(b.appliesTo||[]).reduce((a,x)=>a+(+x.meters||0),0))} m</b></span>}
+                    </div>
+                  );
+                })()}
+                {(b.appliesTo||[]).map((ad,adi) => {
+                  const sw = swatchMetersOf(ad.designNo);
+                  const rowMatch = sw!=null && sw>0 && Math.abs((+ad.meters||0)-sw)<0.01;
+                  return (
+                  <div key={adi} style={{ display:"flex", gap:8, alignItems:"flex-end", marginBottom:6, flexWrap:"wrap", border:`1px solid ${sw==null?T.border:(rowMatch?T.green:T.red)}`, borderRadius:6, padding:6 }}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:3, flex:"2 1 130px" }}>
                       <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Other Design No</label>
                       <input value={ad.designNo} onChange={e => updBillDesign(b.id,adi,"designNo",e.target.value)} list={`designs-${b.id}`} placeholder="design no" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.sans, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box" }} />
                     </div>
-                    <div style={{ display:"flex", flexDirection:"column", gap:3, width:90 }}>
-                      <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Meters</label>
-                      <input type="number" value={ad.meters} onChange={e => updBillDesign(b.id,adi,"meters",e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box" }} />
+                    <div style={{ display:"flex", flexDirection:"column", gap:3, width:88 }}>
+                      <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Meters {sw!=null && <span style={{color: rowMatch?T.green:T.gold}}>(swatch {sw})</span>}</label>
+                      <input type="number" value={ad.meters} onChange={e => updBillDesign(b.id,adi,"meters",e.target.value)} style={{ background:T.surface, border:`1px solid ${sw==null?T.border:(rowMatch?T.green:T.red)}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box" }} />
                     </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:3, width:76 }}>
+                      <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Rate</label>
+                      <input type="number" value={ad.rate||""} onChange={e => updBillDesign(b.id,adi,"rate",e.target.value)} placeholder="rate" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box" }} />
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:3, width:84 }}>
+                      <label style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase" }}>Amount</label>
+                      <div style={{ fontFamily:T.mono, fontSize:12, color:T.gold, padding:"6px 8px" }}>{ad.amount?("Rs."+ad.amount):"—"}</div>
+                    </div>
+                    {sw!=null && !rowMatch && +ad.meters!==sw && <Btn label={`use ${sw}m`} onClick={() => updBillDesign(b.id,adi,"meters",String(sw))} small color={T.gold} textColor={T.bg} />}
                     <Btn label="✕" onClick={() => removeBillDesign(b.id,adi)} color={T.red+"22"} textColor={T.red} small />
                   </div>
-                ))}
+                  );
+                })}
                 <datalist id={`designs-${b.id}`}>{designs && designs.map(dd => <option key={dd.id} value={dd.designNo} />)}</datalist>
               </div>
               <Btn label="✕ Remove this bill" onClick={() => removeFabricBill(b.id)} color={T.red+"22"} textColor={T.red} small />
@@ -2709,12 +2749,14 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
           const colourMeters = (d.colors||[]).reduce((a,c)=>a+(+c.meters||0),0);
           const fabricBillQty = (d.supplierBills||[]).filter(b=>(b.billType||"Fabric")==="Fabric").reduce((a,b)=>a+(+b.qty||0),0);
           const trimsBillQty = (d.supplierBills||[]).filter(b=>b.billType==="Trims").reduce((a,b)=>a+(+b.qty||0),0);
+          const otherDesignQty = (d.supplierBills||[]).filter(b=>(b.billType||"Fabric")==="Fabric").reduce((a,b)=>a+(b.appliesTo||[]).reduce((x,ad)=>x+(+ad.meters||0),0),0);
           const diff = +(fabricBillQty - colourMeters).toFixed(2);
           const match = Math.abs(diff) < 0.01;
           return (
             <div style={{ marginTop:14, background:match?T.bg:T.red+"22", borderRadius:8, padding:"12px 16px", border:`2px solid ${match?T.green:T.red}` }}>
               <div style={{ fontFamily:T.mono, fontSize:12, color:T.steelLt }}>
-                Fabric bill total: <b style={{color:T.gold}}>{fabricBillQty} m</b> &nbsp;·&nbsp; Colour meters total: <b style={{color:match?T.green:T.red}}>{colourMeters} m</b>
+                This design bill: <b style={{color:T.gold}}>{fabricBillQty} m</b> &nbsp;·&nbsp; This design swatch: <b style={{color:match?T.green:T.red}}>{colourMeters} m</b>
+                {otherDesignQty>0 && <span> &nbsp;·&nbsp; Allocated to other designs: <b style={{color:T.gold}}>{otherDesignQty} m</b> &nbsp;·&nbsp; grand bill: <b style={{color:T.gold}}>{fabricBillQty+otherDesignQty} m</b></span>}
                 {trimsBillQty>0 && <span> &nbsp;·&nbsp; Trims bills: <b style={{color:T.gold}}>{trimsBillQty} m</b></span>}
               </div>
               {match
@@ -2823,6 +2865,126 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
         <Btn label="Cancel" onClick={onCancel} color={T.surface} textColor={T.steelLt} />
         <Btn label={saving?"Saving…":existing?"Save Changes":"Create Design"} onClick={handleSave} disabled={saving||!d.designNo||(d.supplierBills||[]).filter(b=>b.supplier&&b.qty).length===0} />
       </div>
+    </div>
+  );
+}
+
+// ── Fabric Stock (all designs: bought vs cut, remaining) ──────────────────────
+// Bought (per design) = own fabric-bill meters + meters allocated to it from other bills (appliesTo).
+// Colour-wise (Option A): design bought is split across colours by their swatch-meter share.
+// Used = fill-sizes pieces × NET average. <=1.25m leftover → stock 0 (shown separately as info).
+function FabricStock({ designs }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState({}); // designNo -> expanded?
+  const SCRAP = 1.25;
+
+  function boughtMeters(dn) {
+    const t = String(dn||"").trim();
+    let m = 0;
+    (designs||[]).forEach(dd => {
+      if (String(dd.designNo).trim() === t)
+        (dd.supplierBills||[]).filter(b=>(b.billType||"Fabric")==="Fabric").forEach(b => { m += (+b.qty||0); });
+      (dd.supplierBills||[]).filter(b=>(b.billType||"Fabric")==="Fabric").forEach(b =>
+        (b.appliesTo||[]).forEach(ad => { if (String(ad.designNo).trim() === t) m += (+ad.meters||0); }));
+    });
+    return +m.toFixed(2);
+  }
+
+  const rows = (designs||[])
+    .filter(d => String(d.designNo||"").trim())
+    .map(d => {
+      const designBought = boughtMeters(d.designNo);
+      const avg = +fabricAverageNet(d) || 0;
+      const cols = (d.colors||[]);
+      const swatchTotal = cols.reduce((a,c)=>a+(+c.meters||0)+(+c.metersHalf||0),0);
+      // colour-wise breakdown
+      const colours = cols.map((c,ci) => {
+        const cMeters = (+c.meters||0)+(+c.metersHalf||0);
+        const share = swatchTotal>0 ? cMeters/swatchTotal : 0;
+        const cBought = +(designBought*share).toFixed(2);
+        const cPcs = Object.values(c.sizes||{}).reduce((x,v)=>x+(+v||0),0) + Object.values(c.sizesHalf||{}).reduce((x,v)=>x+(+v||0),0);
+        const cUsed = +(cPcs*avg).toFixed(2);
+        const cRemainRaw = +(cBought - cUsed).toFixed(2);
+        const cFully = cBought>0 && cRemainRaw <= SCRAP;
+        const cRemain = cFully ? 0 : cRemainRaw;
+        const cLeft = cFully && cRemainRaw>0.01 ? cRemainRaw : 0;
+        return { name:c.colorName||c.colorNo||`Colour ${ci+1}`, bought:cBought, pcs:cPcs, used:cUsed, remain:cRemain, left:cLeft, fully:cFully, hasBill:cBought>0 };
+      });
+      const pcs = totalPieces(d);
+      const consumed = +colours.reduce((a,c)=>a+c.used,0).toFixed(2);
+      const remain = +colours.reduce((a,c)=>a+c.remain,0).toFixed(2);
+      const leftover = +colours.reduce((a,c)=>a+c.left,0).toFixed(2);
+      const fullyCut = designBought>0 && +(designBought-consumed).toFixed(2) <= SCRAP;
+      return { dn:d.designNo, style:d.style||"", bought:designBought, pcs, avg, consumed, remain, leftover, fullyCut, hasBill:designBought>0, colours };
+    })
+    .filter(r => !q.trim() || String(r.dn).toLowerCase().includes(q.trim().toLowerCase()) || (r.style||"").toLowerCase().includes(q.trim().toLowerCase()));
+
+  const totBought = rows.reduce((a,r)=>a+r.bought,0);
+  const totRemain = rows.reduce((a,r)=>a+r.remain,0);
+  const totLeft = rows.reduce((a,r)=>a+r.leftover,0);
+  const th = { padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` };
+  const td = { padding:"8px 10px", fontFamily:T.mono, fontSize:12, color:T.text, border:`1px solid ${T.border}` };
+  const tdc = { padding:"6px 10px 6px 24px", fontFamily:T.mono, fontSize:11, color:T.steelLt, border:`1px solid ${T.border}` };
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+        <div style={{ background:T.card, borderRadius:10, padding:"12px 18px", borderLeft:`3px solid ${T.gold}`, minWidth:130 }}>
+          <div style={{ fontFamily:T.mono, fontSize:22, fontWeight:900, color:T.gold }}>{totBought.toFixed(1)} m</div>
+          <div style={{ fontSize:11, color:T.steelLt }}>Total fabric bought</div>
+        </div>
+        <div style={{ background:T.card, borderRadius:10, padding:"12px 18px", borderLeft:`3px solid ${T.green}`, minWidth:130 }}>
+          <div style={{ fontFamily:T.mono, fontSize:22, fontWeight:900, color:T.green }}>{totRemain.toFixed(1)} m</div>
+          <div style={{ fontSize:11, color:T.steelLt }}>Fabric stock remaining</div>
+        </div>
+        <div style={{ background:T.card, borderRadius:10, padding:"12px 18px", borderLeft:`3px solid ${T.steelLt}`, minWidth:130 }}>
+          <div style={{ fontFamily:T.mono, fontSize:22, fontWeight:900, color:T.steelLt }}>{totLeft.toFixed(1)} m</div>
+          <div style={{ fontSize:11, color:T.steelLt }}>Leftover scraps (info)</div>
+        </div>
+      </div>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search design no / style…" style={{ background:T.surface, border:`2px solid ${T.gold}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:14, padding:"10px 14px", width:"100%", boxSizing:"border-box", outline:"none", marginBottom:14 }} />
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", minWidth:680 }}>
+          <thead><tr style={{ background:T.surface }}>
+            {["Design No","Style","Bought (m)","Cut pcs","Net avg","Used (m)","Stock (m)","Leftover (info)","Status"].map(h => <th key={h} style={th}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map((r,i) => (
+              <Fragment key={r.dn+i}>
+                <tr onClick={()=>setOpen(o=>({...o,[r.dn]:!o[r.dn]}))} style={{ background: r.fullyCut ? T.green+"18" : (i%2===0?T.card:T.surface), cursor:"pointer" }}>
+                  <td style={{...td, color:T.gold, fontWeight:700}}>{(open[r.dn]?"▼ ":"▶ ")}{r.dn}</td>
+                  <td style={td}>{r.style||"—"}</td>
+                  <td style={td}>{r.bought||"—"}</td>
+                  <td style={td}>{r.pcs||0}</td>
+                  <td style={td}>{r.avg?r.avg.toFixed(2):"—"}</td>
+                  <td style={td}>{r.consumed||0}</td>
+                  <td style={{...td, color: r.remain===0?T.green:(r.remain<0?T.red:T.text), fontWeight:700}}>{r.remain}</td>
+                  <td style={{...td, color:T.steelLt}}>{r.leftover>0?r.leftover:"—"}</td>
+                  <td style={td}>{!r.hasBill ? <span style={{color:T.textDim}}>no bill</span> : r.fullyCut ? <span style={{color:T.green}}>✓ fully cut</span> : <span style={{color:T.orange}}>in stock</span>}</td>
+                </tr>
+                {open[r.dn] && r.colours.map((c,ci) => (
+                  <tr key={r.dn+"-c"+ci} style={{ background:T.bg }}>
+                    <td style={tdc}>↳ {c.name}</td>
+                    <td style={tdc}></td>
+                    <td style={tdc}>{c.bought||"—"}</td>
+                    <td style={tdc}>{c.pcs||0}</td>
+                    <td style={tdc}>{r.avg?r.avg.toFixed(2):"—"}</td>
+                    <td style={tdc}>{c.used||0}</td>
+                    <td style={{...tdc, color: c.remain===0?T.green:(c.remain<0?T.red:T.text), fontWeight:700}}>{c.remain}</td>
+                    <td style={{...tdc, color:T.steelLt}}>{c.left>0?c.left:"—"}</td>
+                    <td style={tdc}>{!c.hasBill ? "—" : c.fully ? <span style={{color:T.green}}>✓</span> : <span style={{color:T.orange}}>in stock</span>}</td>
+                  </tr>
+                ))}
+                {open[r.dn] && r.colours.length===0 && (
+                  <tr style={{ background:T.bg }}><td colSpan={9} style={{...tdc, color:T.textDim}}>Is design me colour details nahi hain.</td></tr>
+                )}
+              </Fragment>
+            ))}
+            {rows.length===0 && <tr><td colSpan={9} style={{...td, textAlign:"center", color:T.textDim, padding:24}}>No designs found.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:10 }}>Design pe click karke colour-wise details kholo. Stock = bought − (fill-sizes pcs × net avg). Colour ka bought swatch-meters ke hisaab se banta hai. 1.25m ya kam bache = stock 0 (bacha hua "Leftover" me sirf jaankari ke liye).</div>
     </div>
   );
 }
@@ -5626,6 +5788,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
     ["Challans", "Jobber challans & approval", "Challans", T.orange],
     ["Bills & Ledger", "Jobber bills & payments", "Bills & Ledger", T.gold],
     ["Fabric Purchases", "Fabric bills & monthly totals", "Fabric Purchases", T.steelLt],
+    ["Fabric Stock", "Bought vs cut per design", "Fabric Stock", T.green],
     ["People", "Jobbers & team members", "People", T.steelLt],
     ["Activity Log", "Who changed what & when", "Activity Log", T.steelLt],
     ["Search", "Find any design fast", "Search", T.gold],
@@ -5779,7 +5942,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return j;
   }
 
-  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
+  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Fabric Stock","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
 
   function exportBackup() {
     const backup = {
@@ -6328,6 +6491,7 @@ ${vouchers}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases"><FabricPurchases designs={designs} setDesigns={setDesigns} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
+        {tab==="Fabric Stock" && isAdmin && <Section title="Fabric Stock — bought vs cut (all designs)"><FabricStock designs={designs} /></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
         {tab==="Search" && (
           <div>
