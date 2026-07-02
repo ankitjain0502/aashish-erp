@@ -3110,60 +3110,114 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
   );
 }
 
-// Supplier name picker: name + city/market fields, auto-combined "Name (City)", with live suggestions
-function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier" }) {
-  // parse existing value "Name (City)" into parts
-  const m = (value||"").match(/^(.*?)\s*\(([^)]*)\)\s*$/);
-  const initName = m ? m[1].trim() : (value||"");
-  const initCity = m ? m[2].trim() : "";
-  const [name, setName] = useState(initName);
-  const [city, setCity] = useState(initCity);
-  const [focus, setFocus] = useState(false);
-  function emit(n, c) {
-    const combined = c.trim() ? `${n.trim()} (${c.trim()})` : n.trim();
-    onChange(combined);
+// Supplier name picker: searchable dropdown from `suppliers` table + add-new (name/GSTIN/phone)
+// ── Supplier cache (loads once from `suppliers` table, shared by all pickers) ──
+let _supCache = null, _supLoading = null;
+async function loadSuppliers(force) {
+  if (_supCache && !force) return _supCache;
+  if (!_supLoading) {
+    _supLoading = dbSelect("suppliers").then(rows => {
+      _supCache = (rows || []).slice().sort((a,b) => (a.name||"").localeCompare(b.name||""));
+      _supLoading = null;
+      return _supCache;
+    });
   }
-  // unique existing names (without forcing duplicates)
-  const names = [...new Set(allSuppliers.filter(Boolean))];
-  const matches = name.trim().length>0
-    ? names.filter(s => s.toLowerCase().includes(name.trim().toLowerCase()) && s.toLowerCase()!==`${name.trim().toLowerCase()}${city.trim()?` (${city.trim().toLowerCase()})`:""}`).slice(0,6)
-    : [];
+  return _supLoading;
+}
+function _nextSupCode(list) {
+  let max = 100000;
+  for (const s of list) { const n = parseInt(String(s.id||"").replace(/\D/g,""),10); if (!isNaN(n) && n>max) max=n; }
+  return "S" + (max + 1);
+}
+
+// SupplierPicker: shows ONLY suppliers from the `suppliers` table.
+// value/onChange stay string-based (supplier name) so existing bills keep working.
+function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier" }) {
+  const [list, setList] = useState(_supCache || []);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [nw, setNw] = useState({ name:"", gst:"", state:"", phone:"" });
+  const boxRef = useRef(null);
+
+  useEffect(() => { let ok=true; loadSuppliers().then(r => { if(ok) setList(r); }); return ()=>{ok=false;}; }, []);
+  useEffect(() => {
+    function onDoc(e){ if(boxRef.current && !boxRef.current.contains(e.target)){ setOpen(false); setAdding(false); } }
+    document.addEventListener("mousedown", onDoc); return ()=>document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? list.filter(s => (s.name||"").toLowerCase().includes(q) || (s.gst||"").toLowerCase().includes(q) || (s.state||"").toLowerCase().includes(q))
+    : list;
+  const exactExists = list.some(s => (s.name||"").trim().toLowerCase() === q);
+
+  function pick(s){ onChange(s.name); setQuery(""); setOpen(false); setAdding(false); }
+
+  async function saveNew() {
+    const name = (nw.name||query).trim();
+    if (!name) { alert("Supplier ka naam likho."); return; }
+    setBusy(true);
+    const row = { id:_nextSupCode(list), name, gst:nw.gst.trim()||null, state:nw.state.trim()||null, phone:nw.phone.trim()||null };
+    const res = await dbUpsert("suppliers", row);
+    setBusy(false);
+    if (!res || res.ok === false) { alert("Add nahi hua: " + (res && res.msg ? res.msg : "error")); return; }
+    const next = [...list, row].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+    _supCache = next; setList(next);
+    pick(row);
+    setNw({ name:"", gst:"", state:"", phone:"" });
+  }
+
+  const inpS = { background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" };
+  const selName = value || "";
+
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-        <div style={{ position:"relative", flex:"2 1 160px" }}>
-          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:4 }}>{label} Name *</label>
-          <input
-            value={name}
-            onChange={e => { setName(e.target.value); emit(e.target.value, city); }}
-            onFocus={()=>setFocus(true)}
-            onBlur={()=>setTimeout(()=>setFocus(false),150)}
-            placeholder="type name (suggestions appear)"
-            style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}
-          />
-          {focus && matches.length>0 && (
-            <div style={{ position:"absolute", top:"100%", left:0, right:0, background:T.card, border:`1px solid ${T.gold}`, borderRadius:6, marginTop:2, zIndex:50, maxHeight:180, overflowY:"auto" }}>
-              {matches.map(s => (
-                <div key={s} onMouseDown={()=>{
-                  const mm = s.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
-                  const sn = mm ? mm[1].trim() : s; const sc = mm ? mm[2].trim() : "";
-                  setName(sn); setCity(sc); onChange(s); setFocus(false);
-                }} style={{ padding:"8px 12px", cursor:"pointer", color:T.text, fontSize:13, borderBottom:`1px solid ${T.border}` }}>{s}</div>
+    <div ref={boxRef} style={{ position:"relative" }}>
+      <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:4 }}>{label} *</label>
+      <div onClick={()=>setOpen(o=>!o)} style={{ ...inpS, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", fontWeight: selName?700:400, color: selName?T.text:T.textDim }}>
+        <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{selName || "Supplier chuno / dhundo…"}</span>
+        <span style={{ color:T.gold, fontSize:11 }}>{open?"▲":"▼"}</span>
+      </div>
+
+      {open && (
+        <div style={{ position:"absolute", top:"100%", left:0, right:0, zIndex:60, marginTop:4, background:T.card, border:`1px solid ${T.gold}`, borderRadius:8, boxShadow:"0 10px 26px rgba(90,60,140,.18)", overflow:"hidden" }}>
+          <div style={{ padding:8, background:T.bg }}>
+            <input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Naam / GSTIN / state type karo…" style={inpS} />
+          </div>
+
+          {!adding && (
+            <div style={{ maxHeight:240, overflowY:"auto" }}>
+              {filtered.map(s => (
+                <div key={s.id} onClick={()=>pick(s)} style={{ padding:"9px 12px", borderBottom:`1px solid ${T.border}`, cursor:"pointer" }}>
+                  <div style={{ fontWeight:700, color:T.text, fontSize:13 }}>{s.name}</div>
+                  <div style={{ fontSize:11, color:T.steelLt, marginTop:2 }}>{s.gst || "GSTIN nahi"}{s.state?"  •  "+s.state:""}</div>
+                </div>
               ))}
+              {filtered.length===0 && !query.trim() && <div style={{ padding:12, color:T.textDim, fontSize:12 }}>Koi supplier nahi.</div>}
+              {query.trim() && !exactExists && (
+                <div onClick={()=>{ setNw(n=>({ ...n, name:query.trim() })); setAdding(true); }} style={{ padding:"11px 12px", background:"#FBF3DC", color:T.gold, fontWeight:700, fontSize:13, cursor:"pointer" }}>
+                  + Naya supplier add karo: “{query.trim()}”
+                </div>
+              )}
+            </div>
+          )}
+
+          {adding && (
+            <div style={{ padding:12, display:"flex", flexDirection:"column", gap:8, background:T.card }}>
+              <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase" }}>Naya supplier</div>
+              <input value={nw.name} onChange={e=>setNw({...nw,name:e.target.value})} placeholder="Supplier name *" style={inpS} />
+              <input value={nw.gst} onChange={e=>setNw({...nw,gst:e.target.value.toUpperCase()})} placeholder="GSTIN (optional)" style={inpS} />
+              <input value={nw.phone} onChange={e=>setNw({...nw,phone:e.target.value})} placeholder="Phone (optional)" style={inpS} />
+              <input value={nw.state} onChange={e=>setNw({...nw,state:e.target.value})} placeholder="State (optional)" style={inpS} />
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={saveNew} disabled={busy} style={{ flex:1, background:T.gold, color:"#fff", border:"none", borderRadius:6, padding:"9px 0", fontWeight:700, fontSize:13, cursor:"pointer" }}>{busy?"Add ho raha…":"Add supplier"}</button>
+                <button onClick={()=>setAdding(false)} style={{ flex:1, background:T.surface, color:T.text, border:`1px solid ${T.border}`, borderRadius:6, padding:"9px 0", fontWeight:700, fontSize:13, cursor:"pointer" }}>Cancel</button>
+              </div>
             </div>
           )}
         </div>
-        <div style={{ flex:"1 1 110px" }}>
-          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:4 }}>City / Market</label>
-          <input
-            value={city}
-            onChange={e => { setCity(e.target.value); emit(name, e.target.value); }}
-            placeholder="e.g. Surat / Ring Road"
-            style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" }}
-          />
-        </div>
-      </div>
-      {(name.trim()) && <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold }}>Saved as: {city.trim()?`${name.trim()} (${city.trim()})`:name.trim()}</div>}
+      )}
     </div>
   );
 }
