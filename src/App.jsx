@@ -2989,6 +2989,123 @@ function FabricStock({ designs }) {
   );
 }
 
+// ── Barcode / Stock (colour+size wise: cut − damage = stock, + barcode value + CSV) ──
+// Barcode value = DesignNo-ColourNo-Size (Half sleeve gets "-H"). Damage editable, saved inside colour (jsonb).
+function BarcodeStock({ designs, setDesigns, showToast }) {
+  const [q, setQ] = useState("");
+  const [openD, setOpenD] = useState({});
+
+  function ratioStr(d){ const r=d.ratio||{}; const v=Object.values(r).filter(x=>x!==""&&x!=null); return v.join(" "); }
+  function mrpOf(d){ return d.p1MRP||d.p2MRP||""; }
+  function productOf(sleeve){ return sleeve==="Half" ? "HALF SLEEVE" : "FULL SLEEVE"; }
+
+  async function setDamage(designId, colorIdx, sleeve, size, val) {
+    let updated=null;
+    const next=(designs||[]).map(d => {
+      if(d.id!==designId) return d;
+      const colors=(d.colors||[]).map((c,ci) => {
+        if(ci!==colorIdx) return c;
+        const key = sleeve==="Half" ? "damageSizesHalf" : "damageSizes";
+        return { ...c, [key]: { ...(c[key]||{}), [size]: val } };
+      });
+      updated={ ...d, colors }; return updated;
+    });
+    setDesigns(next);
+    if(updated){ try { await dbUpsert("designs", dToRow(updated)); } catch(e){ showToast && showToast("Save failed"); } }
+  }
+
+  const allRows=[];
+  (designs||[]).filter(d=>String(d.designNo||"").trim()).forEach(d => {
+    (d.colors||[]).forEach((c,ci) => {
+      const cNo=c.colorNo||c.colorName||`C${ci+1}`;
+      const cName=c.colorName||"";
+      [["Full",c.sizes||{},c.damageSizes||{}],["Half",c.sizesHalf||{},c.damageSizesHalf||{}]].forEach(([sleeve,sizes,dmgs]) => {
+        Object.keys(sizes||{}).forEach(sz => {
+          const cut=+sizes[sz]||0;
+          if(cut<=0) return;
+          const dmg=+dmgs[sz]||0;
+          const stock=Math.max(0, cut-dmg);
+          const bc=`${d.designNo}-${cNo}-${sz}`+(sleeve==="Half"?"-H":"");
+          allRows.push({ designId:d.id, dn:d.designNo, ci, cNo, cName, sleeve, size:sz, cut, dmg, stock, barcode:bc,
+            style:d.style||"", fit:d.fit||"", fabric:d.fabric||"", brand:d.brand||"", product:productOf(sleeve), ratio:ratioStr(d), mrp:mrpOf(d) });
+        });
+      });
+    });
+  });
+
+  const designNos=[...new Set(allRows.map(r=>r.dn))].filter(dn => !q.trim() || String(dn).toLowerCase().includes(q.trim().toLowerCase()));
+
+  function exportCSV() {
+    const cols=["DesignNo","Size","ColourNo","ColourName","Sleeve","Style","Fit","Fabric","Product","Ratio","Brand","Barcode","MRP","Cut","Damage","Stock"];
+    const esc=v=>{ const s=String(v==null?"":v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+    const lines=[cols.join(",")];
+    allRows.filter(r=>r.stock>0).forEach(r => lines.push([r.dn,r.size,r.cNo,r.cName,r.sleeve,r.style,r.fit,r.fabric,r.product,r.ratio,r.brand||"RUDE INC",r.barcode,r.mrp,r.cut,r.dmg,r.stock].map(esc).join(",")));
+    const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob); const a=document.createElement("a");
+    a.href=url; a.download=`barcodes_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url);
+    showToast && showToast("CSV downloaded ✓");
+  }
+
+  const totCut=allRows.reduce((a,r)=>a+r.cut,0), totDmg=allRows.reduce((a,r)=>a+r.dmg,0), totStock=allRows.reduce((a,r)=>a+r.stock,0);
+  const th={ padding:"7px 9px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` };
+  const td={ padding:"6px 9px", fontFamily:T.mono, fontSize:12, color:T.text, border:`1px solid ${T.border}` };
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:12, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+        <div style={{ background:T.card, borderRadius:10, padding:"10px 16px", borderLeft:`3px solid ${T.gold}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:20, fontWeight:900, color:T.gold }}>{totCut}</div><div style={{ fontSize:10, color:T.steelLt }}>Total cut</div></div>
+        <div style={{ background:T.card, borderRadius:10, padding:"10px 16px", borderLeft:`3px solid ${T.red}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:20, fontWeight:900, color:T.red }}>{totDmg}</div><div style={{ fontSize:10, color:T.steelLt }}>Damage/short</div></div>
+        <div style={{ background:T.card, borderRadius:10, padding:"10px 16px", borderLeft:`3px solid ${T.green}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:20, fontWeight:900, color:T.green }}>{totStock}</div><div style={{ fontSize:10, color:T.steelLt }}>In stock</div></div>
+        <button onClick={exportCSV} style={{ marginLeft:"auto", background:T.gold, color:"#fff", border:"none", borderRadius:8, padding:"10px 18px", fontFamily:T.mono, fontSize:13, fontWeight:700, cursor:"pointer" }}>⬇ Export CSV (BarTender)</button>
+      </div>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search design no…" style={{ background:T.surface, border:`2px solid ${T.gold}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:14, padding:"10px 14px", width:"100%", boxSizing:"border-box", outline:"none", marginBottom:14 }} />
+
+      {designNos.length===0 && <div style={{ color:T.textDim, fontFamily:T.mono, fontSize:12, padding:20 }}>No designs with cut sizes found.</div>}
+
+      {designNos.map(dn => {
+        const rows=allRows.filter(r=>r.dn===dn);
+        const dCut=rows.reduce((a,r)=>a+r.cut,0), dStock=rows.reduce((a,r)=>a+r.stock,0);
+        const isOpen=openD[dn]!==false;
+        return (
+          <div key={dn} style={{ marginBottom:14, border:`1px solid ${T.border}`, borderRadius:10, overflow:"hidden" }}>
+            <div onClick={()=>setOpenD(o=>({...o,[dn]:o[dn]===false}))} style={{ background:T.surface, padding:"10px 14px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:14 }}>{isOpen?"▼":"▶"} Design {dn}</div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>cut {dCut} · stock <b style={{color:T.green}}>{dStock}</b></div>
+            </div>
+            {isOpen && (
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", minWidth:720 }}>
+                  <thead><tr style={{ background:T.card }}>
+                    {["Colour","Sleeve","Size","Barcode","Cut","Damage","Stock","MRP"].map(h=><th key={h} style={th}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((r,i) => (
+                      <tr key={r.barcode+i} style={{ background: r.stock===0 ? T.red+"14" : (i%2?T.surface:T.card) }}>
+                        <td style={td}>{r.cNo}{r.cName?` (${r.cName})`:""}</td>
+                        <td style={td}>{r.sleeve}</td>
+                        <td style={td}>{r.size}</td>
+                        <td style={{...td, color:T.gold, fontWeight:700}}>{r.barcode}</td>
+                        <td style={td}>{r.cut}</td>
+                        <td style={td}><input type="number" value={r.dmg||""} onChange={e=>setDamage(r.designId,r.ci,r.sleeve,r.size,e.target.value===""?0:+e.target.value)} placeholder="0" style={{ width:56, background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.red, fontFamily:T.mono, fontSize:12, padding:"5px 7px", textAlign:"center" }} /></td>
+                        <td style={{...td, color: r.stock===0?T.red:T.green, fontWeight:700}}>{r.stock}</td>
+                        <td style={td}>{r.mrp?("Rs."+r.mrp):"—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:10 }}>Barcode = DesignNo-ColourNo-Size (Half sleeve = "-H"). Stock = Cut − Damage. Damage aap daalo (process me kharab pieces) — apne aap save ho jaata hai. CSV BarTender ke liye.</div>
+    </div>
+  );
+}
+
 // ── Fabric Purchases (master view across all designs + monthly totals) ────────
 function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, setCreditNotes, showToast, currentUser }) {
   const [sel, setSel] = useState("");
@@ -5789,6 +5906,7 @@ function Dashboard({ designs, bookings, bills, payments, people, lateDesigns, on
     ["Bills & Ledger", "Jobber bills & payments", "Bills & Ledger", T.gold],
     ["Fabric Purchases", "Fabric bills & monthly totals", "Fabric Purchases", T.steelLt],
     ["Fabric Stock", "Bought vs cut per design", "Fabric Stock", T.green],
+    ["Barcode", "Barcodes & piece stock", "Barcode", T.gold],
     ["People", "Jobbers & team members", "People", T.steelLt],
     ["Activity Log", "Who changed what & when", "Activity Log", T.steelLt],
     ["Search", "Find any design fast", "Search", T.gold],
@@ -5942,7 +6060,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return j;
   }
 
-  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Fabric Stock","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
+  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Fabric Stock","Barcode","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
 
   function exportBackup() {
     const backup = {
@@ -6492,6 +6610,7 @@ ${vouchers}
         {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases"><FabricPurchases designs={designs} setDesigns={setDesigns} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Stock" && isAdmin && <Section title="Fabric Stock — bought vs cut (all designs)"><FabricStock designs={designs} /></Section>}
+        {tab==="Barcode" && isAdmin && <Section title="Barcode & Stock — colour+size wise (cut − damage)"><BarcodeStock designs={designs} setDesigns={setDesigns} showToast={showToast} /></Section>}
         {tab==="Activity Log" && isAdmin && <Section title="Activity Log — all changes" action={<PdfBtn targetId="rpt-activity" title="Activity Log" />}><div id="rpt-activity"><ActivityLog log={activityLog} /></div></Section>}
         {tab==="Search" && (
           <div>
