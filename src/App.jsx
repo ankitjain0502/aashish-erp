@@ -1473,7 +1473,7 @@ function ProcessRegister({ design, jobbers, challans = [], onUpdate, role }) {
       const proc = PROCESSES.find(p => (l.process||"").toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes((l.process||"").toLowerCase()));
       if (!proc || !l.process) return;
       // the jobber who DID this process is the challan's jobber
-      fromChallan[proc] = { jobberId:c.jobberId, recdDate:l.receivedDate||c.receivedDate||"", sentDate:l.sentDate||c.sentDate||"", jobberName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||"" };
+      fromChallan[proc] = { jobberId:c.jobberId, recdDate:l.receivedDate||c.receivedDate||"", sentDate:l.sentDate||c.sentDate||"", jobberName:(jobbers.find(j=>j.id===c.jobberId)||{}).name||"", receivedFrom:l.receivedFrom||c.receivedFrom||"", sentToName:(jobbers.find(j=>j.id===(l.sentToId||c.sendToId))||{}).name||"" };
     });
   });
   const headers = ["Process","Jobber",...(isAdmin?["Rate/pc","Code","Recd Date","Dlvd Date","Days"]:[]),"Status"];
@@ -1529,6 +1529,12 @@ function ProcessRegister({ design, jobbers, challans = [], onUpdate, role }) {
                         {linkedFromChallan && <div style={{ fontFamily:T.mono, fontSize:8, color:T.green, marginTop:2 }}>auto from challan · editable</div>}</>
                       : <span style={{ color:T.text, padding:"8px 10px", display:"block" }}>{jName}</span>
                     }
+                    {(auto.receivedFrom || auto.sentToName || effRecd || effDlvd) && (
+                      <div style={{ fontFamily:T.mono, fontSize:8, color:T.steelLt, marginTop:3, lineHeight:1.6, paddingLeft:2 }}>
+                        {(auto.receivedFrom||effRecd) && <div>↳ from: <b style={{color:T.text}}>{auto.receivedFrom||"—"}</b>{effRecd?` · ${String(effRecd).split("-").reverse().join("-")}`:""}</div>}
+                        {(auto.sentToName||effDlvd) && <div>→ to: <b style={{color:T.text}}>{auto.sentToName||"—"}</b>{effDlvd?` · ${String(effDlvd).split("-").reverse().join("-")}`:""}</div>}
+                      </div>
+                    )}
                   </td>
                   {isAdmin && (
                     <>
