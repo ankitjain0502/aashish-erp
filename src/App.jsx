@@ -294,11 +294,12 @@ function buildBarcodeTop(design, jobbers, productionDate) {
   const prodDate = ddmmyy(productionDate);
   return [String(totalPcs), codes, prodDate].filter(Boolean).join("  ");
 }
-// Build the BELOW-barcode fabric block: meters(ceil) rate supplierInitials billNo billDate
+// Build the BELOW-barcode fabric block: meters(ceil) rate supplierInitials+cityLetter+billNo billDate
 function buildFabricBlock(block) {
   if (!block) return "";
   const meters = block.meters !== "" && block.meters != null ? Math.ceil(+block.meters) : "";
-  return [meters, block.rate, block.initials, block.billNo, block.billDate].filter(v => v !== "" && v != null).join("  ");
+  const supTok = (block.initials||"") + (block.cityLetter||"") + (block.billNo||"");
+  return [meters, block.rate, supTok, block.billDate].filter(v => v !== "" && v != null).join("  ");
 }
 
 function dToRow(d) {
@@ -2099,15 +2100,25 @@ function BarcodePanel({ design, jobbers, onUpdate }) {
     meters: existing.meters ?? (pickedBill.meters || ""),
     rate: existing.rate ?? (pickedBill.rate || ""),
     initials: existing.initials ?? initialsOf(pickedBill.supplier || design.supplier),
+    cityLetter: existing.cityLetter ?? "",
     billNo: existing.billNo ?? (pickedBill.billNo || ""),
     billDate: existing.billDate ?? (pickedBill.billDate || ""),
   });
   const upd = k => v => setBlock(b => ({ ...b, [k]: v }));
 
+  // supplier name -> city (for auto city letter), loaded from suppliers table
+  const [supCity, setSupCity] = useState({});
+  useEffect(() => { loadSuppliers().then(list => { const m={}; (list||[]).forEach(s => { if(s.name) m[s.name.trim().toLowerCase()] = s.city||""; }); setSupCity(m); }); }, []);
+  useEffect(() => {
+    if (block.cityLetter) return;
+    const city = supCity[(pickedBill.supplier||design.supplier||"").trim().toLowerCase()] || "";
+    if (city) setBlock(b => b.cityLetter ? b : ({ ...b, cityLetter: city.trim()[0].toUpperCase() }));
+  }, [supCity, billId]);
+
   function loadFromBill(id) {
     setBillId(id);
     const b = bills.find(x => x.id === id);
-    if (b) setBlock({ meters:b.meters||"", rate:b.rate||"", initials:initialsOf(b.supplier||design.supplier), billNo:b.billNo||"", billDate:b.billDate||"" });
+    if (b) { const city = supCity[(b.supplier||design.supplier||"").trim().toLowerCase()]||""; setBlock({ meters:b.meters||"", rate:b.rate||"", initials:initialsOf(b.supplier||design.supplier), cityLetter: city? city.trim()[0].toUpperCase():"", billNo:b.billNo||"", billDate:b.billDate||"" }); }
   }
 
   function save() {
@@ -2136,6 +2147,7 @@ function BarcodePanel({ design, jobbers, onUpdate }) {
         <Inp label="Total Meters (rounds up)" type="number" value={block.meters} onChange={upd("meters")} />
         <Inp label="Rate" type="number" value={block.rate} onChange={upd("rate")} />
         <Inp label="Supplier Initials" value={block.initials} onChange={upd("initials")} />
+        <Inp label="City Letter" value={block.cityLetter} onChange={v => upd("cityLetter")(v.toUpperCase().slice(0,1))} placeholder="e.g. A" />
         <Inp label="Bill No" value={block.billNo} onChange={upd("billNo")} />
         <Inp label="Bill Date" type="date" value={block.billDate} onChange={upd("billDate")} />
       </div>
@@ -3423,7 +3435,7 @@ function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier"
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [nw, setNw] = useState({ name:"", gst:"", state:"", phone:"" });
+  const [nw, setNw] = useState({ name:"", gst:"", state:"", phone:"", city:"" });
   const boxRef = useRef(null);
 
   useEffect(() => { let ok=true; loadSuppliers().then(r => { if(ok) setList(r); }); return ()=>{ok=false;}; }, []);
@@ -3444,14 +3456,14 @@ function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier"
     const name = (nw.name||query).trim();
     if (!name) { alert("Supplier ka naam likho."); return; }
     setBusy(true);
-    const row = { id:_nextSupCode(list), name, gst:nw.gst.trim()||null, state:nw.state.trim()||null, phone:nw.phone.trim()||null };
+    const row = { id:_nextSupCode(list), name, gst:nw.gst.trim()||null, state:nw.state.trim()||null, phone:nw.phone.trim()||null, city:nw.city.trim()||null };
     const res = await dbUpsert("suppliers", row);
     setBusy(false);
     if (!res || res.ok === false) { alert("Add nahi hua: " + (res && res.msg ? res.msg : "error")); return; }
     const next = [...list, row].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
     _supCache = next; setList(next);
     pick(row);
-    setNw({ name:"", gst:"", state:"", phone:"" });
+    setNw({ name:"", gst:"", state:"", phone:"", city:"" });
   }
 
   const inpS = { background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" };
@@ -3495,6 +3507,7 @@ function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier"
               <input value={nw.gst} onChange={e=>setNw({...nw,gst:e.target.value.toUpperCase()})} placeholder="GSTIN (optional)" style={inpS} />
               <input value={nw.phone} onChange={e=>setNw({...nw,phone:e.target.value})} placeholder="Phone (optional)" style={inpS} />
               <input value={nw.state} onChange={e=>setNw({...nw,state:e.target.value})} placeholder="State (optional)" style={inpS} />
+              <input value={nw.city} onChange={e=>setNw({...nw,city:e.target.value})} placeholder="City (optional — for barcode city letter)" style={inpS} />
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={saveNew} disabled={busy} style={{ flex:1, background:T.gold, color:"#fff", border:"none", borderRadius:6, padding:"9px 0", fontWeight:700, fontSize:13, cursor:"pointer" }}>{busy?"Add ho raha…":"Add supplier"}</button>
                 <button onClick={()=>setAdding(false)} style={{ flex:1, background:T.surface, color:T.text, border:`1px solid ${T.border}`, borderRadius:6, padding:"9px 0", fontWeight:700, fontSize:13, cursor:"pointer" }}>Cancel</button>
@@ -6458,6 +6471,7 @@ ${vouchers}
           {isAdmin && <Btn label="📊 Excel" onClick={exportExcel} color={T.surface} textColor={T.green} small style={{ border:`1px solid ${T.green}55` }} />}
           {isAdmin && <Btn label="⇩ Tally" onClick={()=>setShowTally(true)} color={T.surface} textColor={T.gold} small style={{ border:`1px solid ${T.gold}55` }} />}
           {isAdmin && <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display:"none" }} onChange={handleRestoreFile} />}
+          <Btn label="🖨 PDF" onClick={()=>window.print()} color={T.surface} textColor={T.steel} small style={{ border:`1px solid ${T.border}` }} />
           <Btn label="Logout" onClick={onLogout} color={T.surface} textColor={T.steelLt} small />
         </div>
       </div>
