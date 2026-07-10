@@ -3466,8 +3466,12 @@ function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier"
     setNw({ name:"", gst:"", state:"", phone:"", city:"" });
   }
 
+  function setCityLocal(sup, city){ const next=list.map(s=>s.id===sup.id?{...s,city}:s); setList(next); _supCache=next; }
+  async function saveCity(sup){ if(!sup) return; try{ await dbUpsert("suppliers", sup); }catch(e){} }
+
   const inpS = { background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", boxSizing:"border-box" };
   const selName = value || "";
+  const selSup = list.find(s => (s.name||"") === selName);
 
   return (
     <div ref={boxRef} style={{ position:"relative" }}>
@@ -3477,6 +3481,12 @@ function SupplierPicker({ value, onChange, allSuppliers = [], label = "Supplier"
         <span style={{ color:T.gold, fontSize:11 }}>{open?"▲":"▼"}</span>
       </div>
 
+      {selSup && (
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:5 }}>
+          <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, whiteSpace:"nowrap" }}>🏙 CITY:</span>
+          <input value={selSup.city||""} onChange={e=>setCityLocal(selSup, e.target.value)} onBlur={()=>saveCity(list.find(s=>s.id===selSup.id))} placeholder="city likho (barcode city-letter ke liye) — auto save" style={{ ...inpS, padding:"5px 8px", fontSize:12 }} />
+        </div>
+      )}
       {open && (
         <div style={{ position:"absolute", top:"100%", left:0, right:0, zIndex:60, marginTop:4, background:T.card, border:`1px solid ${T.gold}`, borderRadius:8, boxShadow:"0 10px 26px rgba(90,60,140,.18)", overflow:"hidden" }}>
           <div style={{ padding:8, background:T.bg }}>
