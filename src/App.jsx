@@ -294,10 +294,13 @@ function buildBarcodeTop(design, jobbers, productionDate) {
   const prodDate = ddmmyy(productionDate);
   return [String(totalPcs), codes, prodDate].filter(Boolean).join("  ");
 }
-// Build the BELOW-barcode fabric block: meters(ceil) rate supplierInitials+cityLetter+billNo billDate
-function buildFabricBlock(block) {
+// Build the BELOW-barcode fabric block: designTotal(colourMeters) rate supplierInitials+cityLetter+billNo billDate
+// e.g. "1000(66)  155  APA12  010726"  — 1000 = design ke saare colours ka total, 66 = is colour ka
+function buildFabricBlock(block, designTotal) {
   if (!block) return "";
-  const meters = block.meters !== "" && block.meters != null ? Math.ceil(+block.meters) : "";
+  const m = block.meters !== "" && block.meters != null ? Math.ceil(+block.meters) : "";
+  const tot = designTotal != null && designTotal !== "" && +designTotal > 0 ? Math.ceil(+designTotal) : "";
+  const meters = m === "" ? (tot===""?"":String(tot)) : (tot === "" ? String(m) : `${tot}(${m})`);
   const supTok = (block.initials||"") + (block.cityLetter||"") + (block.billNo||"");
   return [meters, block.rate, supTok, block.billDate].filter(v => v !== "" && v != null).join("  ");
 }
@@ -1261,7 +1264,20 @@ function ReferencePhotos({ design, onUpdate, role }) {
 }
 
 // ── Supplier Bills ────────────────────────────────────────────────────────────
-function SupplierBills({ design, onUpdate, role, allSuppliers = [], locks = [], setLocks, currentUser }) {
+function SupplierBills({ design, onUpdate, role, allSuppliers = [], creditNotes = [], locks = [], setLocks, currentUser }) {
+  // is bill pe kitne credit note lage (supplier CN, bill no se match)
+  function cnForBill(b) {
+    const bn = String(b.billNo||"").trim();
+    if (!bn) return null;
+    let qty=0, amt=0; const nos=[];
+    (creditNotes||[]).filter(c => c.partyType==="supplier" && (c.party||"").trim().toLowerCase()===String(b.supplier||"").trim().toLowerCase())
+      .forEach(c => (c.lines||[]).forEach(l => {
+        if (String(l.billNo||"").trim() !== bn) return;
+        qty += (+l.qty||0); amt += (+l.amount||0);
+        if (c.cnNo && !nos.includes(c.cnNo)) nos.push(c.cnNo);
+      }));
+    return (qty||amt) ? { qty, amt, nos } : null;
+  }
   const sectionId = "fabric_bills";
   const isLocked = getLock(locks, sectionId).locked;
   const canEdit = (role === "admin" || role === "team") && !isLocked;
@@ -1317,6 +1333,17 @@ function SupplierBills({ design, onUpdate, role, allSuppliers = [], locks = [], 
                 <span>Round off: <b style={{color:T.steelLt}}>{roundOff>=0?"+":""}{roundOff.toFixed(2)}</b></span>
                 {(b.roundOff===undefined||b.roundOff==="") && Math.abs(autoRound)>0.001 && <button onClick={()=>updBill(b.id,"roundOff",autoRound.toFixed(2))} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:4, padding:"2px 8px", fontFamily:T.mono, fontSize:9, cursor:"pointer" }}>use auto {autoRound>=0?"+":""}{autoRound.toFixed(2)}</button>}
                 <span>Total: <b style={{color:T.white}}>Rs.{total.toFixed(2)}</b></span>
+              </div>
+            );
+          })()}
+          {(() => {
+            const cn = cnForBill(b);
+            if (!cn) return null;
+            const billQty = +b.qty||0, billAmt = billTotalWithGST(b);
+            return (
+              <div style={{ width:"100%", background:T.red+"12", border:`1px solid ${T.red}44`, borderRadius:6, padding:"8px 12px", fontFamily:T.mono, fontSize:10, color:T.red, display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" }}>
+                <span>↳ Credit Note{cn.nos.length?` (${cn.nos.join(", ")})`:""}: <b>−{cn.qty} m · −Rs.{cn.amt.toFixed(2)}</b></span>
+                <span style={{ color:T.green }}>NET: <b>{+(billQty-cn.qty).toFixed(2)} m · Rs.{(billAmt-cn.amt).toFixed(2)}</b></span>
               </div>
             );
           })()}
@@ -2090,73 +2117,149 @@ function BookingsPanel({ bookings, setBookings, showToast, currentUser }) {
 
 // ── Barcode Panel ─────────────────────────────────────────────────────────────
 function BarcodePanel({ design, jobbers, onUpdate }) {
-  const bills = design.supplierBills || [];
-  const existing = design.barcodeBlock || {};
-  const firstBill = bills[0] || {};
-  const [billId, setBillId] = useState(existing.billId || (firstBill.id || ""));
-  const pickedBill = bills.find(b => b.id === billId) || firstBill;
+  const bills = (design.supplierBills || []).filter(b => (b.billType||"Fabric")==="Fabric");
+  const colors = design.colors || [];
+  const saved = design.barcodeBlocks || null;           // colour-wise (new)
+  const legacy = design.barcodeBlock || {};             // old single block (fallback)
 
-  const [block, setBlock] = useState({
-    meters: existing.meters ?? (pickedBill.meters || ""),
-    rate: existing.rate ?? (pickedBill.rate || ""),
-    initials: existing.initials ?? initialsOf(pickedBill.supplier || design.supplier),
-    cityLetter: existing.cityLetter ?? "",
-    billNo: existing.billNo ?? (pickedBill.billNo || ""),
-    billDate: existing.billDate ?? (pickedBill.billDate || ""),
+  const [sameBill, setSameBill] = useState(saved ? !!saved.sameBill : true);
+  const [commonBillId, setCommonBillId] = useState(saved?.commonBillId || legacy.billId || (bills[0]?.id || ""));
+  // per-colour rows: { billId, meters, rate, initials, cityLetter, billNo, billDate }
+  const [rows, setRows] = useState(() => {
+    const byIdx = saved?.rows || {};
+    const o = {};
+    colors.forEach((c,ci) => { o[ci] = byIdx[ci] || { billId:"", meters:"", rate:"", initials:"", cityLetter:"", billNo:"", billDate:"" }; });
+    return o;
   });
-  const upd = k => v => setBlock(b => ({ ...b, [k]: v }));
 
-  // supplier name -> city (for auto city letter), loaded from suppliers table
+  // supplier name -> city (auto city letter)
   const [supCity, setSupCity] = useState({});
   useEffect(() => { loadSuppliers().then(list => { const m={}; (list||[]).forEach(s => { if(s.name) m[s.name.trim().toLowerCase()] = s.city||""; }); setSupCity(m); }); }, []);
-  useEffect(() => {
-    if (block.cityLetter) return;
-    const city = supCity[(pickedBill.supplier||design.supplier||"").trim().toLowerCase()] || "";
-    if (city) setBlock(b => b.cityLetter ? b : ({ ...b, cityLetter: city.trim()[0].toUpperCase() }));
-  }, [supCity, billId]);
 
-  function loadFromBill(id) {
-    setBillId(id);
-    const b = bills.find(x => x.id === id);
-    if (b) { const city = supCity[(b.supplier||design.supplier||"").trim().toLowerCase()]||""; setBlock({ meters:b.meters||"", rate:b.rate||"", initials:initialsOf(b.supplier||design.supplier), cityLetter: city? city.trim()[0].toUpperCase():"", billNo:b.billNo||"", billDate:b.billDate||"" }); }
+  function billFields(bill) {
+    if (!bill) return { rate:"", initials:"", cityLetter:"", billNo:"", billDate:"" };
+    const city = supCity[(bill.supplier||"").trim().toLowerCase()] || "";
+    return {
+      rate: bill.rate || "",
+      initials: initialsOf(bill.supplier || design.supplier),
+      cityLetter: city ? city.trim()[0].toUpperCase() : "",
+      billNo: bill.billNo || "",
+      billDate: bill.billDate || "",
+    };
   }
 
+  // auto-fill a colour row from its bill (meters stay manual)
+  function applyBill(ci, billId) {
+    const bill = bills.find(b => b.id === billId);
+    setRows(r => ({ ...r, [ci]: { ...(r[ci]||{}), billId, ...billFields(bill) } }));
+  }
+  function updRow(ci, k, v) { setRows(r => ({ ...r, [ci]: { ...(r[ci]||{}), [k]: v } })); }
+
+  // when "same bill" is on, keep every colour's bill fields synced to the common bill
+  useEffect(() => {
+    if (!sameBill || !commonBillId) return;
+    const bill = bills.find(b => b.id === commonBillId);
+    setRows(r => {
+      const o = { ...r };
+      colors.forEach((c,ci) => { o[ci] = { ...(o[ci]||{}), billId:commonBillId, ...billFields(bill), meters:(o[ci]||{}).meters||"" }; });
+      return o;
+    });
+  }, [sameBill, commonBillId, supCity, bills.length]);
+
   function save() {
-    onUpdate({ ...design, barcodeBlock:{ ...block, billId }, productionDate: design.productionDate || new Date().toISOString().slice(0,10) });
+    onUpdate({
+      ...design,
+      barcodeBlocks: { sameBill, commonBillId, rows },
+      barcodeBlock: rows[0] ? { ...rows[0], billId: rows[0].billId } : legacy,   // keep old field in sync (CSV/preview)
+      productionDate: design.productionDate || new Date().toISOString().slice(0,10),
+    });
   }
 
   if (!design.mrpFinalized) {
     return <div style={{ background:T.orange+"22", border:`1px solid ${T.orange}`, borderRadius:8, padding:16, fontFamily:T.mono, fontSize:12, color:T.orange }}>⚠ Barcode is locked until MRP is finalized. Set the MRP first.</div>;
   }
+  if (colors.length === 0) {
+    return <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:8, padding:16, fontFamily:T.mono, fontSize:12, color:T.textDim }}>Is design me koi colour nahi hai. Pehle Fill Sizes me colour add karo.</div>;
+  }
+
+  // design ka total = saare colour rows ke meters ka jod (ek bill me kai design ho sakti hain, isliye rows se)
+  const designTotalMeters = colors.reduce((a,c,ci) => a + (+((rows[ci]||{}).meters)||0), 0);
 
   const topLine = buildBarcodeTop(design, jobbers, design.productionDate);
-  const fabricLine = buildFabricBlock({ ...block });
+  const billLabel = b => `${b.supplier||"—"} · Bill ${b.billNo||"—"} · ${b.qty||b.meters||0}m${b.billDate?" · "+b.billDate:""}`;
+  const selS = { background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"7px 10px", fontSize:12, width:"100%", boxSizing:"border-box" };
+  const inS  = { background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:5, padding:"6px 8px", fontFamily:T.mono, fontSize:12, width:"100%", boxSizing:"border-box" };
+  const lb   = { fontFamily:T.mono, fontSize:8, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:2 };
 
   return (
     <div>
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:8, textTransform:"uppercase" }}>Fabric Block (below barcode) — from supplier bill, editable</div>
-      {bills.length > 1 && (
-        <div style={{ marginBottom:12, maxWidth:320 }}>
-          <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:4 }}>Pick supplier bill</div>
-          <select value={billId} onChange={e => loadFromBill(e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, color:T.text, borderRadius:6, padding:"8px 12px", fontSize:13, width:"100%" }}>
-            {bills.map(b => <option key={b.id} value={b.id}>{b.supplier} · Bill {b.billNo} · {b.meters}m</option>)}
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:10, textTransform:"uppercase" }}>Fabric Trace (below barcode) — colour-wise · bill se auto · meters manual · sab editable<br/><span style={{ color:T.gold }}>Design total: {designTotalMeters} m — trace me aise aayega: {designTotalMeters}(colour ke meters)</span></div>
+
+      {bills.length === 0 && (
+        <div style={{ background:T.orange+"18", border:`1px solid ${T.orange}`, borderRadius:8, padding:12, fontFamily:T.mono, fontSize:11, color:T.orange, marginBottom:14 }}>
+          ⚠ Is design me koi fabric bill nahi hai. Pehle Supplier Bills me fabric bill add karo.
+        </div>
+      )}
+
+      <label style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontFamily:T.mono, fontSize:12, color:T.text, cursor:"pointer" }}>
+        <input type="checkbox" checked={sameBill} onChange={e=>setSameBill(e.target.checked)} style={{ width:16, height:16, accentColor:T.gold }} />
+        Same bill for all colours (sab colour ka ek hi bill)
+      </label>
+
+      {sameBill && (
+        <div style={{ maxWidth:420, marginBottom:14 }}>
+          <label style={lb}>Bill (is design ke bills me se)</label>
+          <select value={commonBillId} onChange={e=>setCommonBillId(e.target.value)} style={selS}>
+            <option value="">— bill chuno —</option>
+            {bills.map(b => <option key={b.id} value={b.id}>{billLabel(b)}</option>)}
           </select>
         </div>
       )}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:12, marginBottom:16 }}>
-        <Inp label="Total Meters (rounds up)" type="number" value={block.meters} onChange={upd("meters")} />
-        <Inp label="Rate" type="number" value={block.rate} onChange={upd("rate")} />
-        <Inp label="Supplier Initials" value={block.initials} onChange={upd("initials")} />
-        <Inp label="City Letter" value={block.cityLetter} onChange={v => upd("cityLetter")(v.toUpperCase().slice(0,1))} placeholder="e.g. A" />
-        <Inp label="Bill No" value={block.billNo} onChange={upd("billNo")} />
-        <Inp label="Bill Date" type="date" value={block.billDate} onChange={upd("billDate")} />
+
+      <div style={{ overflowX:"auto", marginBottom:16 }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", minWidth:700 }}>
+          <thead><tr style={{ background:T.surface }}>
+            {["Colour", ...(sameBill?[]:["Bill (chuno)"]), "Meters *", "Rate", "Initials", "City", "Bill No", "Bill Date", "Trace code"].map(h =>
+              <th key={h} style={{ padding:"7px 8px", fontFamily:T.mono, fontSize:8, color:T.steelLt, textAlign:"left", textTransform:"uppercase", border:`1px solid ${T.border}` }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {colors.map((c,ci) => {
+              const r = rows[ci] || {};
+              const trace = buildFabricBlock(r, designTotalMeters);
+              const td = { padding:"5px 6px", border:`1px solid ${T.border}` };
+              return (
+                <tr key={ci} style={{ background: ci%2 ? T.card : T.surface }}>
+                  <td style={{...td, fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700, whiteSpace:"nowrap"}}>{c.colorNo||`C${ci+1}`}{c.colorName?` (${c.colorName})`:""}</td>
+                  {!sameBill && (
+                    <td style={{...td, minWidth:190}}>
+                      <select value={r.billId||""} onChange={e=>applyBill(ci, e.target.value)} style={selS}>
+                        <option value="">— bill chuno —</option>
+                        {bills.map(b => <option key={b.id} value={b.id}>{billLabel(b)}</option>)}
+                      </select>
+                    </td>
+                  )}
+                  <td style={{...td, width:76}}><input type="number" value={r.meters||""} onChange={e=>updRow(ci,"meters",e.target.value)} placeholder="meters" style={{...inS, borderColor: r.meters?T.border:T.orange}} /></td>
+                  <td style={{...td, width:70}}><input type="number" value={r.rate||""} onChange={e=>updRow(ci,"rate",e.target.value)} style={inS} /></td>
+                  <td style={{...td, width:66}}><input value={r.initials||""} onChange={e=>updRow(ci,"initials",e.target.value.toUpperCase())} style={inS} /></td>
+                  <td style={{...td, width:48}}><input value={r.cityLetter||""} onChange={e=>updRow(ci,"cityLetter",e.target.value.toUpperCase().slice(0,1))} placeholder="A" style={inS} /></td>
+                  <td style={{...td, width:66}}><input value={r.billNo||""} onChange={e=>updRow(ci,"billNo",e.target.value)} style={inS} /></td>
+                  <td style={{...td, width:120}}><input type="date" value={r.billDate||""} onChange={e=>updRow(ci,"billDate",e.target.value)} style={inS} /></td>
+                  <td style={{...td, fontFamily:T.mono, fontSize:11, color:T.green, fontWeight:700, whiteSpace:"nowrap"}}>{trace||"—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      <div style={{ display:"flex", gap:10, marginBottom:20, alignItems:"flex-end" }}>
+
+      <div style={{ display:"flex", gap:10, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
         <Inp label="Production Date (auto today, editable)" type="date" value={design.productionDate || new Date().toISOString().slice(0,10)} onChange={v => onUpdate({ ...design, productionDate:v })} style={{ maxWidth:220 }} />
         <Btn label="Save Barcode Data" onClick={save} />
       </div>
 
+      {/* preview — first colour */}
       <div style={{ background:"#fff", borderRadius:10, padding:"20px 24px", maxWidth:420, margin:"0 auto", boxShadow:"0 4px 20px #0006" }}>
+        <div style={{ textAlign:"center", fontFamily:T.mono, fontSize:9, color:"#888", marginBottom:4 }}>preview — {colors[0]?.colorNo||"C1"}{colors[0]?.colorName?` (${colors[0].colorName})`:""}</div>
         <div style={{ textAlign:"center", fontFamily:T.mono, fontSize:13, fontWeight:700, color:"#000", letterSpacing:1, marginBottom:6 }}>{topLine || "—"}</div>
         <div style={{ display:"flex", justifyContent:"center", gap:1.5, height:60, alignItems:"stretch", marginBottom:6 }}>
           {(topLine.replace(/\s/g,"") || "00000000").split("").map((ch,i) => {
@@ -2169,19 +2272,21 @@ function BarcodePanel({ design, jobbers, onUpdate }) {
           {design.lotNo && design.lotNo!==design.designNo && <span style={{ fontFamily:T.mono, fontSize:12, color:"#000", border:"1px solid #000", borderRadius:3, padding:"1px 8px" }}>Lot: {design.lotNo}</span>}
         </div>
         <div style={{ textAlign:"center", fontFamily:T.mono, fontSize:11, color:"#000", marginBottom:4 }}>MRP Rs.{design.p1MRP}</div>
-        <div style={{ textAlign:"center", fontFamily:T.mono, fontSize:11, fontWeight:700, color:"#000", letterSpacing:0.5 }}>{fabricLine || "—"}</div>
+        <div style={{ textAlign:"center", fontFamily:T.mono, fontSize:11, fontWeight:700, color:"#000", letterSpacing:0.5 }}>{buildFabricBlock(rows[0]||{}, designTotalMeters) || "—"}</div>
       </div>
 
       <div style={{ marginTop:18, background:T.surface, borderRadius:8, padding:14 }}>
         <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:8, textTransform:"uppercase" }}>Plain Text (for printing / copy)</div>
         <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, marginBottom:6 }}>ABOVE: {topLine||"—"}</div>
-        <div style={{ fontFamily:T.mono, fontSize:13, color:T.steelLt }}>BELOW: {fabricLine||"—"}</div>
+        {colors.map((c,ci) => (
+          <div key={ci} style={{ fontFamily:T.mono, fontSize:12, color:T.steelLt, marginBottom:3 }}>
+            BELOW · {c.colorNo||`C${ci+1}`}{c.colorName?` (${c.colorName})`:""}: <b style={{color:T.text}}>{buildFabricBlock(rows[ci]||{}, designTotalMeters)||"—"}</b>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
-
-// ── Production Flow (combined movement + process chain, date-ordered) ──────────
 function ProductionFlow({ design, jobbers }) {
   const jname = id => jobbers.find(j => j.id===id)?.name || id || "—";
   const rows = [];
@@ -2240,7 +2345,7 @@ function ProductionFlow({ design, jobbers }) {
 }
 
 // ── Design Detail (tabbed) ────────────────────────────────────────────────────
-function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people, challans = [], locks = [], setLocks }) {
+function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, currentUser, currentJobber, onAddJobber, L = (x)=>x, onSendLot, people, challans = [], creditNotes = [], locks = [], setLocks }) {
   const isAdmin = role === "admin";
   const isTeam = role === "team";
   const isJobber = role === "jobber";
@@ -2363,7 +2468,7 @@ function DesignDetail({ design, jobbers, onBack, onUpdate, showToast, role, curr
       {dt==="Customer Orders" && <Section title="Customer Orders"><CustomerOrders design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Photos" && <Section title="Reference Photos & Shirt Details"><ReferencePhotos design={design} onUpdate={save} role={role} /></Section>}
       {dt==="Movement" && <Section title="Movement Log"><MovementLog design={design} jobbers={jobbers} onAdd={addMovement} role={role} /></Section>}
-      {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} allSuppliers={(design.supplierBills||[]).map(b=>b.supplier).filter(Boolean)} locks={locks} setLocks={setLocks} currentUser={currentUser} /></Section>}
+      {dt==="Supplier Bills" && <Section title="Fabric Supplier Bills"><SupplierBills design={design} onUpdate={save} role={role} allSuppliers={(design.supplierBills||[]).map(b=>b.supplier).filter(Boolean)} creditNotes={creditNotes} locks={locks} setLocks={setLocks} currentUser={currentUser} /></Section>}
       {dt==="Cost Sheet" && isAdmin && <Section title="Design Cost Sheet" action={<PdfBtn targetId="rpt-cost" title={`Cost Sheet ${design.designNo}`} />}><div id="rpt-cost"><DesignCostSheet design={design} jobbers={jobbers} challans={challans} /></div></Section>}
       {dt==="MRP" && isAdmin && <Section title="MRP & Product Codes"><MRPPanel design={design} onUpdate={save} /></Section>}
       {dt==="Barcode" && isAdmin && <Section title="Barcode Generator"><BarcodePanel design={design} jobbers={jobbers} onUpdate={save} /></Section>}
@@ -3255,7 +3360,7 @@ function FabricSupplierLedger({ designs, payments, setPayments, creditNotes, set
       {editPay && <EditPaymentModal pay={editPay} onClose={()=>setEditPay(null)} onSave={saveEditedSupPay} />}
 
       {showPay && <FabricPayModal supplier={sel} onClose={()=>setShowPay(false)} onSave={savePayment} />}
-      {showCN && <CreditNoteForm partyType="supplier" partyLabel={sel} designs={designs} currentUser={currentUser} onClose={()=>setShowCN(false)} onSave={async (cn) => {
+      {showCN && <CreditNoteForm partyType="supplier" partyLabel={sel} designs={designs} creditNotes={creditNotes} currentUser={currentUser} onClose={()=>setShowCN(false)} onSave={async (cn) => {
         const full = { ...cn, id:`CN${Date.now()}`, partyType:"supplier", party:sel, createdAtStr:nowStr() };
         await dbUpsert("credit_notes", cnToRow(full));
         setCreditNotes(p => [full, ...p]);
@@ -3287,7 +3392,7 @@ function FabricPayModal({ supplier, onClose, onSave }) {
   );
 }
 
-function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
+function FabricPurchases({ designs, setDesigns, creditNotes = [], showToast, currentUser }) {
   const [view, setView] = useState(""); // "" = nothing shown, "suppliers", "monthly"
   const [openSupplier, setOpenSupplier] = useState("");
   const [showRecord, setShowRecord] = useState(false);
@@ -3298,6 +3403,24 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
   all.sort((a,b) => (b.billDate||"").localeCompare(a.billDate||""));
   const totQty = all.reduce((a,b)=>a+(+b.qty||0),0);
   const totAmt = all.reduce((a,b)=>a+(+b.amount||0),0);
+
+  // ── supplier credit notes: meters + amount ghata ke NET purchase
+  const supCNs = (creditNotes||[]).filter(c => c.partyType === "supplier");
+  const cnQty = supCNs.reduce((a,c)=>a+(c.lines||[]).reduce((x,l)=>x+(+l.qty||0),0),0);
+  const cnAmt = supCNs.reduce((a,c)=>a+(+c.total||0),0);
+  const netQty = +(totQty - cnQty).toFixed(2);
+  const netAmt = +(totAmt - cnAmt).toFixed(2);
+  // CN per bill no (bill me dikhane ke liye)
+  const cnByBill = {};
+  supCNs.forEach(c => (c.lines||[]).forEach(l => {
+    const k = String(l.billNo||"").trim(); if(!k) return;
+    if(!cnByBill[k]) cnByBill[k] = { qty:0, amt:0, nos:[] };
+    cnByBill[k].qty += (+l.qty||0); cnByBill[k].amt += (+l.amount||0);
+    if(c.cnNo && !cnByBill[k].nos.includes(c.cnNo)) cnByBill[k].nos.push(c.cnNo);
+  }));
+  // CN per month (monthly net ke liye)
+  const cnByMonth = {};
+  supCNs.forEach(c => { const m = monthKey(c.cnDate)||"(no date)"; if(!cnByMonth[m]) cnByMonth[m]={qty:0,amt:0}; cnByMonth[m].qty += (c.lines||[]).reduce((x,l)=>x+(+l.qty||0),0); cnByMonth[m].amt += (+c.total||0); });
 
   // group by supplier
   const bySupplier = {};
@@ -3315,6 +3438,11 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
         <div style={{ background:T.surface, borderRadius:8, padding:"14px 18px", borderLeft:`3px solid ${T.gold}` }}>
           <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>TOTAL FABRIC (all)</div>
           <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.gold }}>{totQty} m · Rs.{totAmt.toFixed(0)}</div>
+          {(cnQty>0||cnAmt>0) && <>
+            <div style={{ fontFamily:T.mono, fontSize:11, color:T.red, marginTop:4 }}>less credit notes: −{cnQty} m · −Rs.{cnAmt.toFixed(0)}</div>
+            <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginTop:6 }}>NET PURCHASE</div>
+            <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.green }}>{netQty} m · Rs.{netAmt.toFixed(0)}</div>
+          </>}
         </div>
         <Btn label="+ Record Purchase" onClick={()=>setShowRecord(true)} color={T.green} textColor="#fff" />
       </div>
@@ -3388,16 +3516,23 @@ function FabricPurchases({ designs, setDesigns, showToast, currentUser }) {
       {/* MONTHLY SUMMARY */}
       {view==="monthly" && (
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-          <thead><tr style={{ background:T.surface }}>{["Month","Quantity (m)","Amount"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+          <thead><tr style={{ background:T.surface }}>{["Month","Quantity (m)","Amount","Credit Notes","NET (m)","NET Amount"].map(h => <th key={h} style={{ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
           <tbody>
-            {Object.keys(byMonth).length===0 && <tr><td colSpan={3} style={{ padding:30, textAlign:"center", color:T.textDim, fontFamily:T.mono }}>No fabric bills yet.</td></tr>}
-            {Object.entries(byMonth).map(([m,v]) => (
+            {Object.keys(byMonth).length===0 && <tr><td colSpan={6} style={{ padding:30, textAlign:"center", color:T.textDim, fontFamily:T.mono }}>No fabric bills yet.</td></tr>}
+            {Object.entries(byMonth).map(([m,v]) => {
+              const cn = cnByMonth[m] || { qty:0, amt:0 };
+              const nQty = +(v.qty - cn.qty).toFixed(2), nAmt = +(v.amt - cn.amt).toFixed(2);
+              return (
               <tr key={m} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:`4px solid ${monthColor(m==="(no date)"?"":(all.find(b=>monthKey(b.billDate)===m)?.billDate))}` }}>
                 <td style={{ padding:"8px 10px", color:T.white, fontWeight:600 }}>{m}</td>
                 <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono }}>{v.qty}</td>
                 <td style={{ padding:"8px 10px", color:T.gold, fontFamily:T.mono, fontWeight:700 }}>Rs.{v.amt.toFixed(2)}</td>
+                <td style={{ padding:"8px 10px", color:T.red, fontFamily:T.mono }}>{(cn.qty||cn.amt) ? `−${cn.qty} m · −Rs.${cn.amt.toFixed(0)}` : "—"}</td>
+                <td style={{ padding:"8px 10px", color:T.green, fontFamily:T.mono, fontWeight:700 }}>{nQty}</td>
+                <td style={{ padding:"8px 10px", color:T.green, fontFamily:T.mono, fontWeight:700 }}>Rs.{nAmt.toFixed(2)}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -5084,7 +5219,7 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
       }} currentUser={currentUser} />}
           {showPayForm && <PaymentForm jobber={j} selJ={selJ} onClose={() => setShowPayForm(false)} onSave={async (pay) => { await dbUpsert("payments", payToRow(pay)); setPayments(p => [pay,...p]); recordActivity(currentUser, "Recorded payment", `Jobber ${j?.name||""}`, `Rs.${pay.amount} (${pay.channel})`); showToast("Payment recorded ✓"); setShowPayForm(false); }} currentUser={currentUser} />}
           {editPay && <EditPaymentModal pay={editPay} onClose={()=>setEditPay(null)} onSave={saveEditedPay} />}
-          {showCNForm && <CreditNoteForm partyType="jobber" partyLabel={j?.name||""} designs={designs} currentUser={currentUser} onClose={()=>setShowCNForm(false)} onSave={async (cn) => {
+          {showCNForm && <CreditNoteForm partyType="jobber" partyLabel={j?.name||""} partyId={selJ} designs={designs} creditNotes={creditNotes} challans={challans} bills={bills} currentUser={currentUser} onClose={()=>setShowCNForm(false)} onSave={async (cn) => {
             const full = { ...cn, id:`CN${Date.now()}`, partyType:"jobber", party:selJ, createdAtStr:nowStr() };
             await dbUpsert("credit_notes", cnToRow(full));
             setCreditNotes(p => [full, ...p]);
@@ -5098,15 +5233,65 @@ function BillsLedger({ jobbers, designs, bills, setBills, payments, setPayments,
 }
 
 // ── Bill Form ─────────────────────────────────────────────────────────────────
-function CreditNoteForm({ partyType, partyLabel, designs, onClose, onSave, currentUser }) {
-  const [cnNo, setCnNo] = useState("");
+function CreditNoteForm({ partyType, partyLabel, partyId, designs, onClose, onSave, currentUser, creditNotes = [], challans = [], bills = [] }) {
   const [cnDate, setCnDate] = useState(new Date().toISOString().slice(0,10));
+
+  // ── financial year of a date (Apr–Mar). 2026-07-05 -> "2627"
+  function fyOf(dateStr) {
+    const d = dateStr ? new Date(dateStr) : new Date();
+    if (isNaN(d)) return "";
+    const y = d.getFullYear(), m = d.getMonth() + 1;   // Apr = 4
+    const start = m >= 4 ? y : y - 1;
+    return String(start % 100).padStart(2,"0") + String((start + 1) % 100).padStart(2,"0");
+  }
+  // ── next CN no for this FY: shared across ALL suppliers/jobbers, restarts each year
+  function nextCnNo(dateStr) {
+    const fy = fyOf(dateStr);
+    let max = 0;
+    (creditNotes||[]).forEach(c => {
+      if (fyOf(c.cnDate) !== fy) return;
+      const n = parseInt(String(c.cnNo||"").replace(/\D/g,""), 10);
+      if (!isNaN(n) && n > max) max = n;
+    });
+    return `CN/${fy}/${String(max + 1).padStart(3,"0")}`;
+  }
+  const [cnNo, setCnNo] = useState("");   // manual — Tally ka CN number daalo (XML mismatch na ho)
+  const suggestedCn = nextCnNo(cnDate);
+
+  // ── only designs linked to THIS party (supplier: via fabric bills · jobber: via challans/bills)
+  const partyDesigns = (designs||[]).filter(d => {
+    const dn = String(d.designNo||"").trim();
+    if (!dn) return false;
+    if (partyType === "supplier") {
+      return (d.supplierBills||[]).some(b => (b.supplier||"").trim().toLowerCase() === String(partyLabel||"").trim().toLowerCase());
+    }
+    // jobber: design me is jobber ka process assign ho, ya challan/bill me aaya ho (IDs se match)
+    if (!partyId) return false;
+    const inProcess = Object.values(d.processes||{}).some(p => p && p.jobber === partyId);
+    const inChallan = (challans||[]).some(c => c.jobberId===partyId && (c.lines||[]).some(l => String(l.designNo).trim() === dn));
+    const inBill    = (bills||[]).some(b => b.jobberId===partyId && (b.lines||[]).some(l => String(l.designNo).trim() === dn));
+    return inProcess || inChallan || inBill;
+  });
+  const designOptions = partyDesigns.map(d => d.designNo);
+
   const [reason, setReason] = useState("");
   const [lines, setLines] = useState([{ id:`L${Date.now()}`, designNo:"", billNo:"", qty:"", rate:"", amount:"" }]);
   const REASONS = ["Damage claim","Rate difference","Short supply","Quality issue","Goods returned","Other"];
   function addLine() { setLines(l => [...l, { id:`L${Date.now()}`, designNo:"", billNo:"", qty:"", rate:"", amount:"" }]); }
   function removeLine(id) { setLines(l => l.length>1 ? l.filter(x=>x.id!==id) : l); }
-  function updLine(id,k,v) { setLines(l => l.map(x => { if(x.id!==id) return x; const nx={...x,[k]:v}; const q=+nx.qty||0,r=+nx.rate||0; if(k==="qty"||k==="rate") nx.amount=(q*r)?String(q*r):nx.amount; return nx; })); }
+  // design ke liye is party ka bill no dhundo (supplier: fabric bill · jobber: jobber bill)
+  function billNoFor(designNo) {
+    const dn = String(designNo||"").trim();
+    if (!dn) return "";
+    if (partyType === "supplier") {
+      const d = (designs||[]).find(x => String(x.designNo).trim() === dn);
+      const b = (d?.supplierBills||[]).find(b => (b.supplier||"").trim().toLowerCase() === String(partyLabel||"").trim().toLowerCase() && b.billNo);
+      return b ? b.billNo : "";
+    }
+    const jb = (bills||[]).filter(b => b.jobberId===partyId && (b.lines||[]).some(l => String(l.designNo).trim() === dn) && b.billNo);
+    return jb.length ? jb[jb.length-1].billNo : "";
+  }
+  function updLine(id,k,v) { setLines(l => l.map(x => { if(x.id!==id) return x; const nx={...x,[k]:v}; const q=+nx.qty||0,r=+nx.rate||0; if(k==="qty"||k==="rate") nx.amount=(q*r)?String(q*r):nx.amount; if(k==="designNo"){ const bn=billNoFor(v); if(bn) nx.billNo=bn; } return nx; })); }
   const total = lines.reduce((a,l)=>a+(+l.amount||0),0);
   const valid = lines.filter(l => l.designNo && l.amount);
   function save() {
@@ -5117,16 +5302,25 @@ function CreditNoteForm({ partyType, partyLabel, designs, onClose, onSave, curre
     <Modal title={`New Credit Note — ${partyLabel}`} onClose={onClose}>
       <div style={{ background:T.red+"15", border:`1px solid ${T.red}55`, borderRadius:8, padding:10, marginBottom:14, fontFamily:T.mono, fontSize:11, color:T.red }}>A credit note REDUCES what you owe {partyLabel} (claim/deduction). It shows on the credit side of their ledger.</div>
       <div style={{ display:"flex", gap:12, marginBottom:14, flexWrap:"wrap" }}>
-        <Inp label="Credit Note No *" value={cnNo} onChange={setCnNo} style={{ minWidth:140 }} />
+        <div style={{ display:"flex", flexDirection:"column", gap:4, minWidth:190 }}>
+          <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>Credit Note No * (Tally se)</label>
+          <input value={cnNo} onChange={e=>setCnNo(e.target.value)} placeholder="Tally ka CN number" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", outline:"none", boxSizing:"border-box" }} />
+          <span style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt }}>suggestion: {suggestedCn} <span onClick={()=>setCnNo(suggestedCn)} style={{ color:T.gold, cursor:"pointer", textDecoration:"underline" }}>use</span></span>
+        </div>
         <Inp label="Date" type="date" value={cnDate} onChange={setCnDate} style={{ minWidth:150 }} />
         <Inp label="Reason *" value={reason} onChange={setReason} options={REASONS} style={{ minWidth:160 }} />
       </div>
-      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Designs / amounts in this credit note</div>
+      <div style={{ fontFamily:T.mono, fontSize:10, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Designs / amounts in this credit note — sirf {partyLabel} ke designs</div>
+      {designOptions.length===0 && <div style={{ fontFamily:T.mono, fontSize:11, color:T.orange, marginBottom:8 }}>⚠ Is party se juda koi design nahi mila.</div>}
       {lines.map(l => (
         <div key={l.id} style={{ display:"flex", gap:8, marginBottom:8, alignItems:"flex-end", flexWrap:"wrap" }}>
-          <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={designs.map(d=>d.designNo)} style={{ flex:2, minWidth:110 }} />
-          <Inp label="Against Bill No" value={l.billNo} onChange={v=>updLine(l.id,"billNo",v)} style={{ width:120 }} placeholder="bill no" />
-          <Inp label="Qty" type="number" value={l.qty} onChange={v=>updLine(l.id,"qty",v)} style={{ width:70 }} />
+          <div style={{ display:"flex", flexDirection:"column", gap:4, flex:2, minWidth:120 }}>
+            <label style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", letterSpacing:0.8 }}>Design No (type/select)</label>
+            <input value={l.designNo} onChange={e=>updLine(l.id,"designNo",e.target.value)} list={`cn-designs-${l.id}`} placeholder="design no type karo…" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:13, padding:"8px 12px", width:"100%", outline:"none", boxSizing:"border-box" }} />
+            <datalist id={`cn-designs-${l.id}`}>{designOptions.map(dn => <option key={dn} value={dn} />)}</datalist>
+          </div>
+          <Inp label="Against Bill No (auto)" value={l.billNo} onChange={v=>updLine(l.id,"billNo",v)} style={{ width:130 }} placeholder="bill no" />
+          <Inp label="Meter Qty" type="number" value={l.qty} onChange={v=>updLine(l.id,"qty",v)} style={{ width:90 }} placeholder="optional" />
           <Inp label="Rate" type="number" value={l.rate} onChange={v=>updLine(l.id,"rate",v)} style={{ width:80 }} />
           <Inp label="Amount" type="number" value={l.amount} onChange={v=>updLine(l.id,"amount",v)} style={{ width:90 }} />
           {lines.length>1 && <Btn label="✕" onClick={()=>removeLine(l.id)} color={T.red+"22"} textColor={T.red} small />}
@@ -6455,7 +6649,7 @@ ${vouchers}
           </div>
         </div>
         <div style={{ maxWidth:1100, margin:"0 auto", padding:24 }}>
-          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} challans={challans} locks={locks} setLocks={setLocks} />
+          <DesignDetail design={sel} jobbers={jobbers} onBack={() => setSel(null)} onUpdate={updateDesign} showToast={showToast} role={role} currentUser={currentUser} L={(x)=>x} onSendLot={sendLot} people={jobbers} challans={challans} creditNotes={creditNotes} locks={locks} setLocks={setLocks} />
         </div>
         <Toast {...toast} />
       </div>
@@ -6637,7 +6831,7 @@ ${vouchers}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
         {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
-        {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases"><FabricPurchases designs={designs} setDesigns={setDesigns} showToast={showToast} currentUser={currentUser} /></Section>}
+        {tab==="Fabric Purchases" && isAdmin && <Section title="Fabric Purchases"><FabricPurchases designs={designs} setDesigns={setDesigns} creditNotes={creditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Suppliers" && isAdmin && <Section title="Fabric Supplier Ledger"><FabricSupplierLedger designs={designs} payments={payments} setPayments={setPayments} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
         {tab==="Fabric Stock" && isAdmin && <Section title="Fabric Stock — bought vs cut (all designs)"><FabricStock designs={designs} /></Section>}
         {tab==="Barcode" && isAdmin && <Section title="Barcode & Stock — colour+size wise (cut − damage)"><BarcodeStock designs={designs} setDesigns={setDesigns} showToast={showToast} /></Section>}
