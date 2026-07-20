@@ -1898,7 +1898,16 @@ function bToRow(b) {
   return { id:b.id, customer:b.customer||"", design_no:b.designNo||"", color:b.color||"", sizes:b.sizes||{}, booking_date:b.bookingDate||"", delivery_date:b.deliveryDate||"", notes:b.notes||"", total:b.total||0, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"" };
 }
 function rowToB(r) {
-  return { id:r.id, customer:r.customer||"", designNo:r.design_no||"", color:r.color||"", sizes:r.sizes||{}, bookingDate:r.booking_date||"", deliveryDate:r.delivery_date||"", notes:r.notes||"", total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"" };
+  return { id:r.id, customer:r.customer||"", designNo:r.design_no||"", color:r.color||"", sizes:r.sizes||{}, bookingDate:r.booking_date||"", deliveryDate:r.delivery_date||"", notes:r.notes||"", total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"",
+    orderType:r.order_type||"app", orderNo:r.order_no||"", externalRef:r.external_ref||"", agent:r.agent||"", source:r.source||"", sourcePlace:r.source_place||"",
+    advanceAmount:r.advance_amount||0, advanceType:r.advance_type||"", advanceDate:r.advance_date||"", advanceRef:r.advance_ref||"",
+    lines:r.lines||[], customerId:r.customer_id||"" };
+}
+function bToRow(b) {
+  return { id:b.id, customer:b.customer||"", customer_id:b.customerId||"", design_no:b.designNo||"", color:b.color||"", sizes:b.sizes||{}, booking_date:b.bookingDate||"", delivery_date:b.deliveryDate||"", notes:b.notes||"", total:b.total||0, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"",
+    order_type:b.orderType||"app", order_no:b.orderNo||"", external_ref:b.externalRef||"", agent:b.agent||"", source:b.source||"", source_place:b.sourcePlace||"",
+    advance_amount:b.advanceAmount||0, advance_type:b.advanceType||"", advance_date:b.advanceDate||"", advance_ref:b.advanceRef||"",
+    lines:b.lines||[] };
 }
 
 // ── Bills + Payments converters ───────────────────────────────────────────────
@@ -2002,136 +2011,402 @@ function recordNotification(who, message, designId, forUser) {
   dbUpsert("notifications", notifToRow(entry), true);
 }
 
-function BookingsPanel({ bookings, setBookings, showToast, currentUser }) {
-  const [form, setForm] = useState({ customer:"", designNo:"", color:"", sizes:{}, bookingDate:"", deliveryDate:"", notes:"" });
-  const [view, setView] = useState("list");
-  const upd = k => v => setForm(f => ({ ...f, [k]:v }));
-  function updSize(s, v) { setForm(f => ({ ...f, sizes:{ ...f.sizes, [s]:v } })); }
+function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser }) {
+  const [view, setView] = useState("list");           // list | new | detail | summary
+  const [selId, setSelId] = useState(null);
+  const [summaryTab, setSummaryTab] = useState("customer"); // customer | design
+  const [searchQ, setSearchQ] = useState("");
+  const [customers, setCustomers] = useState([]);
+  const [editId, setEditId] = useState(null);
 
-  async function add() {
-    if (!form.customer || !form.designNo) { showToast("Customer and Design No required","error"); return; }
-    const total = SIZES.reduce((a,s) => a+(+(form.sizes[s]||0)), 0);
-    const b = { ...form, id:`BK${Date.now()}`, total, createdBy:currentUser, createdAtStr:nowStr() };
+  // Load customers once
+  useEffect(() => { loadSuppliers && loadCustList(); }, []);
+  async function loadCustList() {
+    try { const r = await dbSelect("customers"); setCustomers((r||[]).map(c=>({ id:c.id, name:c.name||"", gstin:c.gst||"", address:c.address||"", phone:c.phone||"", transport:c.transport||"", paymentTerms:c.payment_terms||"" }))); } catch(e) {}
+  }
+
+  // --- Alert helpers ---
+  function daysLeft(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr), now = new Date();
+    now.setHours(0,0,0,0); d.setHours(0,0,0,0);
+    return Math.round((d-now)/(1000*60*60*24));
+  }
+  function alertColor(dl) {
+    if (dl===null) return null;
+    if (dl < 0) return "#7B1D1D";   // overdue — dark red
+    if (dl <= 3) return T.red;       // 3 days
+    if (dl <= 10) return T.orange;   // 10 days
+    return T.green;
+  }
+  function alertLabel(dl) {
+    if (dl===null) return "";
+    if (dl < 0) return `⛔ Overdue ${Math.abs(dl)}d`;
+    if (dl===0) return "🔴 Due today!";
+    if (dl<=3) return `🔴 ${dl}d left`;
+    if (dl<=10) return `🟡 ${dl}d left`;
+    return `🟢 ${dl}d left`;
+  }
+
+  // Auto order no: DDMMYYYY-seq
+  function nextOrderNo() {
+    const today = new Date();
+    const dd=String(today.getDate()).padStart(2,"0"), mm=String(today.getMonth()+1).padStart(2,"0"), yyyy=today.getFullYear();
+    const prefix=`${dd}${mm}${yyyy}`;
+    const todayOrders = bookings.filter(b=>(b.orderNo||"").startsWith(prefix));
+    const seq = todayOrders.length + 1;
+    return `${prefix}-${String(seq).padStart(3,"0")}`;
+  }
+
+  // Blank order form
+  function blankForm() { return { orderType:"app", orderNo:nextOrderNo(), externalRef:"", agent:"", source:"", sourcePlace:"", customer:"", customerId:"", bookingDate:new Date().toISOString().slice(0,10), advanceAmount:"", advanceType:"", advanceDate:"", advanceRef:"", notes:"", lines:[blankLine()] }; }
+  function blankLine() { return { id:`L${Date.now()}${Math.random().toString(36).slice(2,6)}`, designNo:"", color:"", sizes:{}, sizeActive:{}, deliveryDate:"", hasDelivery:false }; }
+  const [form, setForm] = useState(blankForm);
+  const [custNew, setCustNew] = useState(false);
+  const [custForm, setCustForm] = useState({ name:"", gstin:"", address:"", phone:"", transport:"", paymentTerms:"" });
+
+  // Customer form helpers
+  function updCust(k){ return v => setCustForm(f=>({...f,[k]:v})); }
+  function custSugg() { if (!form.customer.trim()) return []; const q=form.customer.trim().toLowerCase(); return customers.filter(c=>(c.name||"").toLowerCase().includes(q)).slice(0,8); }
+
+  async function saveCustomer() {
+    if (!custForm.name.trim()) return;
+    const existing = customers.find(c=>(c.name||"").trim().toLowerCase()===custForm.name.trim().toLowerCase());
+    if (existing) { setForm(f=>({...f,customer:existing.name,customerId:existing.id})); setCustNew(false); return; }
+    const id=`C${Date.now()}`; const row={ id, name:custForm.name.trim(), gst:custForm.gstin, address:custForm.address, phone:custForm.phone, transport:custForm.transport, payment_terms:custForm.paymentTerms };
+    await dbUpsert("customers", row);
+    const nc={id,...custForm,name:custForm.name.trim()};
+    setCustomers(p=>[...p,nc]); setForm(f=>({...f,customer:custForm.name.trim(),customerId:id})); setCustNew(false); showToast("Customer saved ✓");
+  }
+
+  // Line helpers
+  function addLine(){ setForm(f=>({...f,lines:[...f.lines,blankLine()]})); }
+  function remLine(id){ setForm(f=>({...f,lines:f.lines.filter(l=>l.id!==id)})); }
+  function updLine(id,k,v){ setForm(f=>({...f,lines:f.lines.map(l=>l.id!==id?l:{...l,[k]:v})})); }
+  function updSize(lid,sz,v){ setForm(f=>({...f,lines:f.lines.map(l=>l.id!==lid?l:{...l,sizes:{...l.sizes,[sz]:v}})})); }
+  function toggleSize(lid,sz){ setForm(f=>({...f,lines:f.lines.map(l=>l.id!==lid?l:{...l,sizeActive:{...l.sizeActive,[sz]:!l.sizeActive[sz]},sizes:{...l.sizes,[sz]:l.sizeActive[sz]?"":l.sizes[sz]}})})); }
+  // Quick parse: "M1 L3 XL3 XXL2"
+  function parseQuick(lid,txt){
+    const map={}; const parts=txt.toUpperCase().match(/([A-Z0-9]+)(\d+)/g)||[];
+    parts.forEach(p=>{ const m=p.match(/([A-Z0-9]+)(\d+)/); if(m) map[m[1]]=m[2]; });
+    setForm(f=>({...f,lines:f.lines.map(l=>l.id!==lid?l:{...l,sizes:{...l.sizes,...map},sizeActive:{...l.sizeActive,...Object.fromEntries(Object.keys(map).map(k=>[k,true]))}})}));
+  }
+
+  // Save order
+  async function saveOrder() {
+    if (!form.customer.trim()) { showToast("Customer zaroori hai","error"); return; }
+    if (!form.orderNo.trim()) { showToast("Order no zaroori hai","error"); return; }
+    const dup = bookings.find(b=>b.id!==editId && (b.orderNo||"")===form.orderNo.trim());
+    if (dup) { showToast(`Order no ${form.orderNo} already exists!`,"error"); return; }
+    const total = form.lines.reduce((a,l)=>a+SIZES.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0);
+    const b={ ...form, id:editId||`BK${Date.now()}`, total, createdBy:currentUser, createdAtStr:nowStr() };
     await dbUpsert("bookings", bToRow(b));
-    setBookings(p => [b, ...p]);
-    recordActivity(currentUser, "Added booking", `Design ${b.designNo}`, `${b.customer} · ${b.total} pcs`);
-    setForm({ customer:"", designNo:"", color:"", sizes:{}, bookingDate:"", deliveryDate:"", notes:"" });
-    showToast("Booking added ✓");
-  }
-  async function remove(id) {
-    await dbDelete("bookings", id);
-    setBookings(p => p.filter(b => b.id!==id));
-    showToast("Booking deleted");
+    if (editId) setBookings(p=>p.map(x=>x.id===editId?b:x)); else setBookings(p=>[b,...p]);
+    recordActivity(currentUser, editId?"Edited booking":"Added booking", `Order ${b.orderNo}`, `${b.customer} · ${total} pcs`);
+    showToast(editId?"Order updated ✓":"Order added ✓");
+    setForm(blankForm()); setEditId(null); setView("list");
   }
 
-  const byDesign = {};
-  bookings.forEach(b => {
-    if (!byDesign[b.designNo]) byDesign[b.designNo] = {};
-    const key = b.color || "—";
-    if (!byDesign[b.designNo][key]) byDesign[b.designNo][key] = {};
-    SIZES.forEach(s => {
-      const q = +(b.sizes||{})[s]||0;
-      if (q) byDesign[b.designNo][key][s] = (byDesign[b.designNo][key][s]||0) + q;
-    });
-  });
+  async function deleteBooking(id) {
+    if (!window.confirm("Delete this order?")) return;
+    await dbDelete("bookings", id); setBookings(p=>p.filter(b=>b.id!==id)); showToast("Deleted");
+  }
 
-  return (
-    <div>
-      <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-        <button onClick={() => setView("list")} style={{ background:view==="list"?T.gold:T.surface, color:view==="list"?T.bg:T.steelLt, border:"none", borderRadius:20, padding:"6px 20px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Bookings</button>
-        <button onClick={() => setView("summary")} style={{ background:view==="summary"?T.gold:T.surface, color:view==="summary"?T.bg:T.steelLt, border:"none", borderRadius:20, padding:"6px 20px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Demand Summary</button>
+  function startEdit(b) { setForm({...b, lines:(b.lines&&b.lines.length?b.lines:[blankLine()])}); setEditId(b.id); setView("new"); }
+
+  const SOURCES=["WhatsApp","Fair/Exhibition","Phone Call","Email","Walk-in","Agent/Distributor","Other"];
+  const ADVANCE_TYPES=["Cash","Cheque","Online"];
+
+  // Filter bookings for list
+  const q = searchQ.trim().toLowerCase();
+  const filtered = q ? bookings.filter(b=>(b.customer||"").toLowerCase().includes(q)||(b.orderNo||"").toLowerCase().includes(q)||(b.lines||[]).some(l=>(l.designNo||"").toLowerCase().includes(q))) : bookings;
+
+  // --- NEW ORDER FORM ---
+  if (view==="new") return (
+    <div style={{ maxWidth:800, margin:"0 auto" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+        <Btn label="← Back" onClick={()=>{ setView("list"); setForm(blankForm()); setEditId(null); }} color={T.surface} textColor={T.steelLt} small />
+        <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold }}>{editId?"Edit Order":"New Order"}</div>
       </div>
 
-      <div style={{ background:T.surface, borderRadius:8, padding:14, marginBottom:16 }}>
-        <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, marginBottom:10, textTransform:"uppercase" }}>New Booking</div>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:10, alignItems:"flex-end" }}>
-          <Inp label="Customer" value={form.customer} onChange={upd("customer")} placeholder="Customer name" style={{ minWidth:160 }} />
-          <Inp label="Main Design No" value={form.designNo} onChange={upd("designNo")} placeholder="e.g. 2083 (pattern)" style={{ minWidth:110 }} />
-          <Inp label="Lot No (this run)" value={form.lotNo} onChange={upd("lotNo")} placeholder="e.g. 3290" style={{ minWidth:110 }} />
-          <Inp label="Color" value={form.color} onChange={upd("color")} placeholder="e.g. Navy" style={{ minWidth:120 }} />
-          <Inp label="Booking Date" type="date" value={form.bookingDate} onChange={upd("bookingDate")} />
-          <Inp label="Delivery Date" type="date" value={form.deliveryDate} onChange={upd("deliveryDate")} />
-        </div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end", marginBottom:10 }}>
-          {SIZES.map(s => (
-            <div key={s} style={{ textAlign:"center" }}>
-              <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, marginBottom:3 }}>{s}</div>
-              <input type="number" value={form.sizes[s]||""} onChange={e => updSize(s,e.target.value)} placeholder="0" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:4, color:T.text, fontFamily:T.mono, fontSize:12, width:44, padding:"5px 3px", textAlign:"center" }} />
-            </div>
+      {/* ORDER TYPE */}
+      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Order Type</div>
+        <div style={{ display:"flex", gap:10, marginBottom:10 }}>
+          {["app","external"].map(t=>(
+            <button key={t} onClick={()=>setForm(f=>({...f,orderType:t}))} style={{ background:form.orderType===t?T.gold:T.surface, color:form.orderType===t?T.bg:T.steelLt, border:`1px solid ${form.orderType===t?T.gold:T.border}`, borderRadius:20, padding:"5px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+              {t==="app"?"● App Order":"○ External Order"}
+            </button>
           ))}
         </div>
-        <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
-          <Inp label="Notes" value={form.notes} onChange={upd("notes")} placeholder="optional" style={{ flex:1 }} />
-          <Btn label="+ Add Booking" onClick={add} />
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+          <div style={{ flex:1, minWidth:160 }}>
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:3 }}>{form.orderType==="app"?"Order No (auto)":"External Ref No *"}</label>
+            <input value={form.orderType==="app"?form.orderNo:form.externalRef} onChange={e=>setForm(f=>form.orderType==="app"?{...f,orderNo:e.target.value}:{...f,externalRef:e.target.value})} readOnly={form.orderType==="app"} style={{ background:form.orderType==="app"?T.bg:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:form.orderType==="app"?T.steelLt:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 10px", width:"100%", boxSizing:"border-box" }} />
+          </div>
+          {form.orderType==="external" && <Inp label="Agent / Source" value={form.agent} onChange={v=>setForm(f=>({...f,agent:v}))} style={{ flex:1, minWidth:140 }} />}
+          <Inp label="Booking Date" type="date" value={form.bookingDate} onChange={v=>setForm(f=>({...f,bookingDate:v}))} />
         </div>
+        {form.orderType==="external" && (
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginTop:10 }}>
+            <Inp label="Source" value={form.source} onChange={v=>setForm(f=>({...f,source:v}))} options={["", ...SOURCES]} style={{ minWidth:160 }} />
+            <Inp label="Place (optional)" value={form.sourcePlace} onChange={v=>setForm(f=>({...f,sourcePlace:v}))} placeholder="e.g. Ahmedabad Fair" style={{ flex:1 }} />
+          </div>
+        )}
       </div>
 
-      {view === "list" ? (
-        <div style={{ overflowX:"auto" }}>
-          {bookings.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono, fontSize:12 }}>No bookings yet.</div>}
-          {bookings.length > 0 && (
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-              <thead>
-                <tr style={{ background:T.surface }}>
-                  {["Customer","Design","Color",...SIZES,"Total","Delivery",""].map(h => (
-                    <th key={h} style={{ padding:"8px 6px", fontFamily:T.mono, fontSize:9, color:h===("Total")?T.gold:T.steelLt, textAlign:"left", textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {bookings.map((b,i) => (
-                  <tr key={b.id||i} style={{ background:i%2===0?T.card:T.surface, borderBottom:`1px solid ${T.border}` }}>
-                    <td style={{ padding:"8px 6px", color:T.white, fontWeight:600 }}>{b.customer}</td>
-                    <td style={{ padding:"8px 6px", color:T.gold, fontFamily:T.mono, fontWeight:700 }}>{b.designNo}</td>
-                    <td style={{ padding:"8px 6px", color:T.steelLt }}>{b.color}</td>
-                    {SIZES.map(s => <td key={s} style={{ padding:"8px 4px", color:T.text, fontFamily:T.mono, textAlign:"center" }}>{(b.sizes||{})[s]||""}</td>)}
-                    <td style={{ padding:"8px 6px", color:T.gold, fontFamily:T.mono, fontWeight:700, textAlign:"center" }}>{b.total}</td>
-                    <td style={{ padding:"8px 6px", color:T.steelLt, fontFamily:T.mono }}>{b.deliveryDate||"—"}</td>
-                    <td style={{ padding:"8px 6px" }}><Btn label="✕" onClick={() => remove(b.id)} color={T.red+"22"} textColor={T.red} small /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* CUSTOMER */}
+      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Customer</div>
+        <div style={{ position:"relative", marginBottom:8 }}>
+          <input value={form.customer} onChange={e=>{ setForm(f=>({...f,customer:e.target.value,customerId:""})); setCustNew(false); }} placeholder="Customer naam type karo…" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:14, padding:"10px 12px", width:"100%", boxSizing:"border-box" }} />
+          {custSugg().length>0 && (
+            <div style={{ position:"absolute", top:"100%", left:0, right:0, background:T.card, border:`1px solid ${T.gold}`, borderRadius:8, zIndex:20, boxShadow:"0 8px 24px #0004" }}>
+              {custSugg().map(c=>(
+                <div key={c.id} onClick={()=>{ setForm(f=>({...f,customer:c.name,customerId:c.id})); setCustNew(false); }} style={{ padding:"10px 14px", cursor:"pointer", borderBottom:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:13, color:T.text }}>
+                  <b>{c.name}</b>{c.gstin?<span style={{color:T.steelLt,fontSize:11}}> · {c.gstin}</span>:null}
+                  {c.transport?<span style={{color:T.steelLt,fontSize:11}}> · {c.transport}</span>:null}
+                </div>
+              ))}
+              <div onClick={()=>{ setCustForm({name:form.customer,...{gstin:"",address:"",phone:"",transport:"",paymentTerms:""}}); setCustNew(true); }} style={{ padding:"10px 14px", cursor:"pointer", color:T.gold, fontFamily:T.mono, fontSize:12, fontWeight:700 }}>+ Naya customer add karo</div>
+            </div>
+          )}
+          {form.customer && !custSugg().length && !form.customerId && (
+            <div style={{ marginTop:6 }}>
+              <Btn label="+ Naya customer add karo" onClick={()=>{ setCustForm({name:form.customer,gstin:"",address:"",phone:"",transport:"",paymentTerms:""}); setCustNew(true); }} color={T.gold} textColor={T.bg} small />
+            </div>
           )}
         </div>
-      ) : (
-        <div>
-          {Object.keys(byDesign).length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono, fontSize:12 }}>No bookings to summarize.</div>}
-          {Object.entries(byDesign).map(([dno, colors]) => (
-            <div key={dno} style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, marginBottom:14, overflow:"hidden" }}>
-              <div style={{ background:T.surface, padding:"10px 16px", borderBottom:`1px solid ${T.border}` }}>
-                <span style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:T.gold }}>Design {dno}</span>
+        {custNew && (
+          <div style={{ background:T.bg, borderRadius:8, padding:12, border:`1px solid ${T.gold}`, marginTop:8 }}>
+            <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Naya Customer Details</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
+              <Inp label="Name *" value={custForm.name} onChange={updCust("name")} />
+              <Inp label="GSTIN" value={custForm.gstin} onChange={updCust("gstin")} />
+              <Inp label="Phone" value={custForm.phone} onChange={updCust("phone")} />
+              <Inp label="Transport" value={custForm.transport} onChange={updCust("transport")} />
+              <Inp label="Payment Terms" value={custForm.paymentTerms} onChange={updCust("paymentTerms")} placeholder="e.g. 30 days" />
+              <Inp label="Address" value={custForm.address} onChange={updCust("address")} />
+            </div>
+            <div style={{ marginTop:10, display:"flex", gap:8 }}>
+              <Btn label="Save Customer" onClick={saveCustomer} />
+              <Btn label="Cancel" onClick={()=>setCustNew(false)} color={T.surface} textColor={T.steelLt} small />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* LINES (designs) */}
+      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:10 }}>Designs in this Order</div>
+        {form.lines.map((l,li)=>(
+          <div key={l.id} style={{ background:T.bg, borderRadius:8, padding:12, marginBottom:10, border:`1px solid ${T.border}` }}>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8, alignItems:"flex-end" }}>
+              <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={["",...""].concat(designs.map(d=>d.designNo))} style={{ minWidth:110 }} />
+              <Inp label="Colour" value={l.color} onChange={v=>updLine(l.id,"color",v)} placeholder="e.g. Navy" style={{ minWidth:110 }} />
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:14 }}>
+                <input type="checkbox" checked={!!l.hasDelivery} onChange={e=>updLine(l.id,"hasDelivery",e.target.checked)} style={{ width:15, height:15, accentColor:T.gold }} />
+                <label style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Delivery Date</label>
               </div>
-              <div style={{ padding:14, overflowX:"auto" }}>
-                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-                  <thead>
-                    <tr style={{ background:T.surface }}>
-                      <th style={{ padding:"6px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textAlign:"left", border:`1px solid ${T.border}` }}>COLOR</th>
-                      {SIZES.map(s => <th key={s} style={{ padding:"6px", fontFamily:T.mono, fontSize:9, color:T.gold, border:`1px solid ${T.border}`, minWidth:36, textAlign:"center" }}>{s}</th>)}
-                      <th style={{ padding:"6px", fontFamily:T.mono, fontSize:9, color:T.steelLt, border:`1px solid ${T.border}`, textAlign:"center" }}>TOTAL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(colors).map(([color, szs]) => {
-                      const rt = SIZES.reduce((a,s) => a+(szs[s]||0), 0);
-                      return (
-                        <tr key={color}>
-                          <td style={{ padding:"6px 10px", color:T.white, fontWeight:600, border:`1px solid ${T.border}` }}>{color}</td>
-                          {SIZES.map(s => <td key={s} style={{ padding:"6px", color:szs[s]?T.text:T.textDim, fontFamily:T.mono, border:`1px solid ${T.border}`, textAlign:"center" }}>{szs[s]||0}</td>)}
-                          <td style={{ padding:"6px", color:T.gold, fontFamily:T.mono, fontWeight:700, border:`1px solid ${T.border}`, textAlign:"center" }}>{rt}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              {l.hasDelivery && <Inp label="Date" type="date" value={l.deliveryDate} onChange={v=>updLine(l.id,"deliveryDate",v)} />}
+              {form.lines.length>1 && <Btn label="✕" onClick={()=>remLine(l.id)} color={T.red+"22"} textColor={T.red} small />}
+            </div>
+            {/* Size checkboxes */}
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+              {SIZES.map(s=>(
+                <button key={s} onClick={()=>toggleSize(l.id,s)} style={{ background:l.sizeActive&&l.sizeActive[s]?T.gold:T.surface, color:l.sizeActive&&l.sizeActive[s]?T.bg:T.steelLt, border:`1px solid ${l.sizeActive&&l.sizeActive[s]?T.gold:T.border}`, borderRadius:6, fontFamily:T.mono, fontSize:11, fontWeight:700, padding:"4px 10px", cursor:"pointer" }}>{s}</button>
+              ))}
+            </div>
+            {/* Quick entry */}
+            <div style={{ display:"flex", gap:8, marginBottom:8, alignItems:"flex-end" }}>
+              <div style={{ flex:1 }}>
+                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:3 }}>Quick Entry (e.g. M1 L3 XL3 XXL2)</label>
+                <input placeholder="M1 L3 XL3 XXL2…" onBlur={e=>{ if(e.target.value.trim()) parseQuick(l.id,e.target.value); e.target.value=""; }} style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
               </div>
             </div>
-          ))}
+            {/* Size inputs (only active) */}
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {SIZES.filter(s=>l.sizeActive&&l.sizeActive[s]).map(s=>(
+                <div key={s} style={{ textAlign:"center" }}>
+                  <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, marginBottom:2 }}>{s}</div>
+                  <input type="number" value={(l.sizes||{})[s]||""} onChange={e=>updSize(l.id,s,e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:13, width:50, padding:"6px 4px", textAlign:"center" }} />
+                </div>
+              ))}
+              {(!l.sizeActive||!Object.values(l.sizeActive).some(Boolean)) && <div style={{ fontFamily:T.mono, fontSize:11, color:T.textDim, padding:"6px 0" }}>Sizes select karo (upar click) ya quick entry use karo</div>}
+            </div>
+            <div style={{ fontFamily:T.mono, fontSize:11, color:T.gold, marginTop:6, textAlign:"right" }}>
+              Total: {SIZES.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0)} pcs
+            </div>
+          </div>
+        ))}
+        <Btn label="+ Add Design / Colour" onClick={addLine} color={T.surface} textColor={T.steelLt} small />
+      </div>
+
+      {/* ADVANCE */}
+      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:10 }}>Advance Received (optional)</div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <Inp label="Type" value={form.advanceType} onChange={v=>setForm(f=>({...f,advanceType:v}))} options={["", ...ADVANCE_TYPES]} style={{ minWidth:120 }} />
+          <Inp label="Amount (Rs.)" type="number" value={form.advanceAmount} onChange={v=>setForm(f=>({...f,advanceAmount:v}))} style={{ minWidth:120 }} />
+          <Inp label="Date" type="date" value={form.advanceDate} onChange={v=>setForm(f=>({...f,advanceDate:v}))} />
+          <Inp label="Ref / Cheque No" value={form.advanceRef} onChange={v=>setForm(f=>({...f,advanceRef:v}))} style={{ minWidth:140 }} />
         </div>
-      )}
+      </div>
+
+      {/* NOTES */}
+      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:16 }}>
+        <Inp label="Notes (optional)" value={form.notes} onChange={v=>setForm(f=>({...f,notes:v}))} placeholder="koi bhi note…" />
+      </div>
+
+      <div style={{ display:"flex", gap:10 }}>
+        <Btn label={editId?"Update Order":"Save Order"} onClick={saveOrder} />
+        <Btn label="Cancel" onClick={()=>{ setView("list"); setForm(blankForm()); setEditId(null); }} color={T.surface} textColor={T.steelLt} small />
+      </div>
+    </div>
+  );
+
+  // --- ORDER LIST ---
+  if (view==="list") return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+        <button onClick={()=>setView("list")} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Bookings</button>
+        <button onClick={()=>setView("summary")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Demand Summary</button>
+        <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search customer / design / order…" style={{ flex:1, minWidth:180, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
+        <Btn label="+ New Order" onClick={()=>{ setForm(blankForm()); setEditId(null); setView("new"); }} />
+      </div>
+
+      {filtered.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>No bookings yet.</div>}
+      {filtered.map(b=>{
+        const total=b.lines?.length?b.lines.reduce((a,l)=>a+SIZES.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0):b.total;
+        const nearestDl = b.lines?.length ? b.lines.filter(l=>l.hasDelivery&&l.deliveryDate).map(l=>daysLeft(l.deliveryDate)).filter(d=>d!==null).sort((a,z)=>a-z)[0] : daysLeft(b.deliveryDate);
+        const ac = alertColor(nearestDl);
+        return (
+          <div key={b.id} onClick={()=>{ setSelId(b.id); setView("detail"); }} style={{ background:T.card, borderRadius:10, padding:"12px 16px", marginBottom:10, border:`1px solid ${ac||T.border}`, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+            <div>
+              <div style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:14 }}>{b.orderNo||b.externalRef||b.id}</div>
+              <div style={{ fontWeight:700, color:T.text, fontSize:14, marginTop:2 }}>{b.customer}</div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:2 }}>
+                {b.bookingDate} · {total} pcs
+                {b.orderType==="external"&&b.source?` · 📋 ${b.source}${b.sourcePlace?` (${b.sourcePlace})`:""}` : ""}
+                {b.advanceAmount>0?` · 💰 Rs.${b.advanceAmount} ${b.advanceType}`:""}
+              </div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              {ac && <div style={{ fontFamily:T.mono, fontSize:11, fontWeight:700, color:ac }}>{alertLabel(nearestDl)}</div>}
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:4 }}>{(b.lines||[]).length} design{(b.lines||[]).length!==1?"s":""}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // --- ORDER DETAIL ---
+  if (view==="detail") {
+    const b = bookings.find(x=>x.id===selId);
+    if (!b) return <Btn label="← Back" onClick={()=>setView("list")} />;
+    const cust = customers.find(c=>c.id===b.customerId||c.name===b.customer);
+    return (
+      <div style={{ maxWidth:700, margin:"0 auto" }}>
+        <div style={{ display:"flex", gap:8, marginBottom:16, alignItems:"center" }}>
+          <Btn label="← Back" onClick={()=>setView("list")} color={T.surface} textColor={T.steelLt} small />
+          <div style={{ flex:1, fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold }}>{b.orderNo||b.externalRef}</div>
+          <Btn label="✏ Edit" onClick={()=>startEdit(b)} small />
+          <Btn label="🗑 Delete" onClick={()=>deleteBooking(b.id)} color={T.red+"22"} textColor={T.red} small />
+        </div>
+
+        <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
+          <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:T.text, marginBottom:4 }}>{b.customer}</div>
+          {cust && <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>{cust.gstin?`GSTIN: ${cust.gstin} · `:""}Payment: {cust.paymentTerms||"—"} · Transport: {cust.transport||"—"}</div>}
+          <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:4 }}>Booking: {b.bookingDate}{b.orderType==="external"?` · ${b.source||""}${b.sourcePlace?` · ${b.sourcePlace}`:""}`:""}</div>
+          {b.agent && <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Agent: {b.agent}</div>}
+        </div>
+
+        {(b.lines||[]).map((l,i)=>{
+          const dl = l.hasDelivery ? daysLeft(l.deliveryDate) : null;
+          const ac = alertColor(dl);
+          const sizes = SIZES.filter(s=>(+(l.sizes||{})[s]||0)>0);
+          return (
+            <div key={l.id||i} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10, borderLeft:`4px solid ${ac||T.steelLt}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                <div>
+                  <span style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:15 }}>📦 {l.designNo||"—"}</span>
+                  {l.color && <span style={{ fontFamily:T.mono, color:T.steelLt, fontSize:13 }}> — {l.color}</span>}
+                </div>
+                {ac && <div style={{ fontFamily:T.mono, fontSize:11, fontWeight:700, color:ac }}>{alertLabel(dl)}</div>}
+              </div>
+              <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginTop:8 }}>
+                {sizes.map(s=><div key={s} style={{ fontFamily:T.mono, fontSize:13, color:T.text }}><span style={{color:T.steelLt}}>{s}: </span><b>{(l.sizes||{})[s]}</b></div>)}
+                <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>= {sizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0)} pcs</div>
+              </div>
+              {l.hasDelivery && l.deliveryDate && <div style={{ fontFamily:T.mono, fontSize:11, color:ac||T.steelLt, marginTop:6 }}>🗓 Delivery: {l.deliveryDate}</div>}
+            </div>
+          );
+        })}
+
+        {(+b.advanceAmount>0) && (
+          <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
+            <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:4 }}>Advance Received</div>
+            <div style={{ fontFamily:T.mono, fontSize:14, color:T.green, fontWeight:700 }}>💰 Rs.{b.advanceAmount} · {b.advanceType}{b.advanceDate?` · ${b.advanceDate}`:""}{b.advanceRef?` · Ref: ${b.advanceRef}`:""}</div>
+          </div>
+        )}
+        {b.notes && <div style={{ background:T.surface, borderRadius:10, padding:14, fontFamily:T.mono, fontSize:12, color:T.steelLt }}>📝 {b.notes}</div>}
+      </div>
+    );
+  }
+
+  // --- SUMMARY ---
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+        <button onClick={()=>setView("list")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Bookings</button>
+        <button onClick={()=>setView("summary")} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Demand Summary</button>
+        <button onClick={()=>setSummaryTab("customer")} style={{ background:summaryTab==="customer"?T.steel:T.surface, color:summaryTab==="customer"?T.bg:T.steelLt, border:"none", borderRadius:16, padding:"5px 14px", fontFamily:T.mono, fontSize:11, cursor:"pointer" }}>By Customer</button>
+        <button onClick={()=>setSummaryTab("design")} style={{ background:summaryTab==="design"?T.steel:T.surface, color:summaryTab==="design"?T.bg:T.steelLt, border:"none", borderRadius:16, padding:"5px 14px", fontFamily:T.mono, fontSize:11, cursor:"pointer" }}>By Design</button>
+      </div>
+
+      {summaryTab==="customer" && (() => {
+        const byC={};
+        bookings.forEach(b=>{ if(!byC[b.customer]) byC[b.customer]={customer:b.customer,orders:[],total:0,advance:0}; byC[b.customer].orders.push(b); byC[b.customer].total+=b.lines?.length?b.lines.reduce((a,l)=>a+SIZES.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0):b.total; byC[b.customer].advance+=(+b.advanceAmount||0); });
+        return Object.values(byC).map(c=>(
+          <div key={c.customer} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10 }}>
+            <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.text, marginBottom:4 }}>{c.customer} <span style={{color:T.gold}}>· {c.total} pcs</span></div>
+            {c.advance>0 && <div style={{ fontFamily:T.mono, fontSize:11, color:T.green, marginBottom:6 }}>💰 Advance: Rs.{c.advance}</div>}
+            {c.orders.map(b=>(
+              <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:10, marginBottom:6 }}>
+                <div style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>{b.orderNo||b.externalRef} · {b.bookingDate}</div>
+                {(b.lines||[]).map((l,i)=>{
+                  const dl=l.hasDelivery?daysLeft(l.deliveryDate):null; const ac=alertColor(dl);
+                  const sz=SIZES.filter(s=>(+(l.sizes||{})[s]||0)>0).map(s=>`${s}${(l.sizes||{})[s]}`).join(" ");
+                  return <div key={i} style={{ fontFamily:T.mono, fontSize:11, color:T.text, marginTop:3 }}>📦 {l.designNo||"—"}{l.color?` · ${l.color}`:""} — {sz}{ac?<span style={{color:ac, marginLeft:8}}>{alertLabel(dl)}</span>:null}</div>;
+                })}
+              </div>
+            ))}
+          </div>
+        ));
+      })()}
+
+      {summaryTab==="design" && (() => {
+        const byD={};
+        bookings.forEach(b=>(b.lines||[]).forEach(l=>{ if(!l.designNo) return; if(!byD[l.designNo]) byD[l.designNo]={dn:l.designNo,lines:[],total:0}; byD[l.designNo].lines.push({...l,customer:b.customer,orderNo:b.orderNo||b.externalRef}); byD[l.designNo].total+=SIZES.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); }));
+        return Object.values(byD).map(d=>(
+          <div key={d.dn} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10 }}>
+            <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold, marginBottom:8 }}>Design {d.dn} <span style={{color:T.text}}>· {d.total} pcs</span></div>
+            {d.lines.map((l,i)=>{
+              const dl=l.hasDelivery?daysLeft(l.deliveryDate):null; const ac=alertColor(dl);
+              const sz=SIZES.filter(s=>(+(l.sizes||{})[s]||0)>0).map(s=>`${s}${(l.sizes||{})[s]}`).join(" ");
+              return <div key={i} style={{ background:T.surface, borderRadius:8, padding:10, marginBottom:6, fontFamily:T.mono, fontSize:12 }}>
+                <b style={{color:T.text}}>{l.customer}</b>{l.color?<span style={{color:T.steelLt}}> · {l.color}</span>:null} — {sz}{ac?<span style={{color:ac, marginLeft:8}}>{alertLabel(dl)}</span>:null}
+                <div style={{fontSize:10,color:T.steelLt}}>Order: {l.orderNo}</div>
+              </div>;
+            })}
+          </div>
+        ));
+      })()}
     </div>
   );
 }
+
 
 // ── Barcode Panel ─────────────────────────────────────────────────────────────
 function BarcodePanel({ design, jobbers, onUpdate }) {
@@ -6862,7 +7137,7 @@ ${vouchers}
             </div>
           </div>
         )}
-        {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} showToast={showToast} currentUser={currentUser} /></div></Section>}
+        {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} designs={designs} showToast={showToast} currentUser={currentUser} /></div></Section>}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
         {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
