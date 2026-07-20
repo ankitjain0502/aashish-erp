@@ -146,7 +146,7 @@ const FITS = ["Regular Fit","Slim Fit","Loose Fit","Oversized"];
 const COLLARS = ["Round Collar","V Collar","Cuban Collar","Any Other"];
 const PLACKETS = ["Inside","Outside"];
 const WASHES = ["Normal","Stone Wash","Acid Wash","Enzyme Wash","Sand Blast","None"];
-const SPEC_KEYS = ["Label","Button","Embroidery","Print","Vinyl","Other Details 1","Other Details 2"];
+const SPEC_KEYS = ["Label","Button","Tag","Embroidery","Print","Vinyl","Other Details 1","Other Details 2"];
 const RATIO_SIZES = ["S","M","L","XL","XXL","3XL","4XL","5XL","6XL","7XL","8XL","9XL","10XL"];
 
 // Month color for entries — cycles by month index
@@ -1744,6 +1744,24 @@ function DesignCostSheet({ design, jobbers, challans = [] }) {
               </Fragment>
             );
           })}
+          {/* ── Trims / Accessories (design creation ke rates: Label, Button, Tag, + Other) ── */}
+          {(design.specs||[]).filter(sp => +sp.rate > 0).map((sp,i) => {
+            const amt = +((+sp.rate) * totalPcs).toFixed(2);
+            grand += amt;
+            return (
+              <tr key={"trim"+i} style={{ borderBottom:`1px solid ${T.border}`, background:T.card }}>
+                <td style={{ padding:"10px", color:T.text, fontWeight:600 }}>{sp.key}{sp.text?<span style={{ color:T.steelLt, fontWeight:400, fontSize:11 }}> · {sp.text}</span>:null}</td>
+                <td style={{ padding:"10px", color:T.steelLt }}>—</td>
+                <td style={{ padding:"10px", color:T.steelLt }}>—</td>
+                <td style={{ padding:"10px", color:T.steelLt }}>—</td>
+                <td style={{ padding:"10px", color:T.gold, fontFamily:T.mono }}>Rs.{sp.rate}</td>
+                <td style={{ padding:"10px", color:T.text, fontFamily:T.mono }}>{totalPcs}</td>
+                <td style={{ padding:"10px", color:T.white, fontFamily:T.mono }}>Rs.{amt}</td>
+                <td style={{ padding:"10px", color:T.steelLt }}>—</td>
+                <td style={{ padding:"10px", color:T.steelLt }}>—</td>
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr style={{ background:T.surface }}>
@@ -2589,7 +2607,14 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
   function removeCustomSize(name) {
     setD(f => ({ ...f, customSizes:(f.customSizes||[]).filter(x=>x!==name), activeColors:f.activeColors.filter(x=>x!==name) }));
   }
-  function ensureSpecs(arr) { return SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"" }); }
+  function ensureSpecs(arr) {
+    const base = SPEC_KEYS.map(k => (arr||[]).find(x=>x.key===k) || { key:k, text:"", thumb:"", rate:"" });
+    const extra = (arr||[]).filter(x => x && x.custom && !SPEC_KEYS.includes(x.key));
+    return [...base, ...extra];
+  }
+  function addCustomSpec() { setD(f => ({ ...f, specs: [...ensureSpecs(f.specs), { key:`Other ${(ensureSpecs(f.specs).filter(x=>x.custom).length)+1}`, text:"", thumb:"", rate:"", custom:true }] })); }
+  function updSpecKey(oldKey, newKey) { setD(f => ({ ...f, specs: ensureSpecs(f.specs).map(sp => sp.key===oldKey ? {...sp, key:newKey} : sp) })); }
+  function removeSpec(key) { setD(f => ({ ...f, specs: ensureSpecs(f.specs).filter(sp => !(sp.custom && sp.key===key)) })); }
   function updSpec(key, field, v) { setD(f => ({ ...f, specs: ensureSpecs(f.specs).map(sp => sp.key===key ? {...sp,[field]:v} : sp) })); }
   function updRatio(sz, v) { setD(f => ({ ...f, ratio: { ...(f.ratio||{}), [sz]: v } })); }
   function updManualAvg(k, v) { setD(f => ({ ...f, manualAvg: { ...(f.manualAvg||{}), [k]: v } })); }
@@ -2693,11 +2718,21 @@ function DesignForm({ onSave, onCancel, existing, jobbers = [], onAddJobber, des
           {ensureSpecs(d.specs).map(sp => (
             <div key={sp.key} style={{ background:T.surface, borderRadius:8, padding:10, border:`1px solid ${T.border}`, display:"flex", gap:10, alignItems:"flex-start" }}>
               <PhotoUpload value={sp.thumb} onChange={v => updSpec(sp.key,"thumb",v)} size={48} />
-              <div style={{ flex:1 }}>
-                <Inp label={sp.key} value={sp.text} onChange={v => updSpec(sp.key,"text",v)} placeholder="details (optional)" />
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:6 }}>
+                {sp.custom
+                  ? <div style={{ display:"flex", gap:6, alignItems:"flex-end" }}>
+                      <div style={{ flex:1 }}><Inp label="Name (apna naam likho)" value={sp.key} onChange={v => updSpecKey(sp.key, v)} placeholder="e.g. Packing" /></div>
+                      <Btn label="✕" onClick={() => removeSpec(sp.key)} color={T.red+"22"} textColor={T.red} small />
+                    </div>
+                  : null}
+                <Inp label={sp.custom ? "Details" : sp.key} value={sp.text} onChange={v => updSpec(sp.key,"text",v)} placeholder="details (optional)" />
+                <Inp label="Rate / piece (Rs.)" type="number" value={sp.rate||""} onChange={v => updSpec(sp.key,"rate",v)} placeholder="cost sheet me judega" />
               </div>
             </div>
           ))}
+        </div>
+        <div style={{ marginTop:10 }}>
+          <Btn label="+ Other (naya item + rate)" onClick={addCustomSpec} color={T.gold} textColor={T.bg} small />
         </div>
       </Section>
       </div>
