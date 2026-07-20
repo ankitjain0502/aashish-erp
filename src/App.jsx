@@ -1894,9 +1894,6 @@ function PendingApprovals({ design, jobbers, onApprove, onReject }) {
 }
 
 // ── Bookings (standalone, independent of designs) ─────────────────────────────
-function bToRow(b) {
-  return { id:b.id, customer:b.customer||"", design_no:b.designNo||"", color:b.color||"", sizes:b.sizes||{}, booking_date:b.bookingDate||"", delivery_date:b.deliveryDate||"", notes:b.notes||"", total:b.total||0, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"" };
-}
 function rowToB(r) {
   return { id:r.id, customer:r.customer||"", designNo:r.design_no||"", color:r.color||"", sizes:r.sizes||{}, bookingDate:r.booking_date||"", deliveryDate:r.delivery_date||"", notes:r.notes||"", total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"",
     orderType:r.order_type||"app", orderNo:r.order_no||"", externalRef:r.external_ref||"", agent:r.agent||"", source:r.source||"", sourcePlace:r.source_place||"",
@@ -2168,7 +2165,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
                   {c.transport?<span style={{color:T.steelLt,fontSize:11}}> · {c.transport}</span>:null}
                 </div>
               ))}
-              <div onClick={()=>{ setCustForm({name:form.customer,...{gstin:"",address:"",phone:"",transport:"",paymentTerms:""}}); setCustNew(true); }} style={{ padding:"10px 14px", cursor:"pointer", color:T.gold, fontFamily:T.mono, fontSize:12, fontWeight:700 }}>+ Naya customer add karo</div>
+              <div onClick={()=>{ setCustForm({name:form.customer,gstin:"",address:"",phone:"",transport:"",paymentTerms:""}); setCustNew(true); }} style={{ padding:"10px 14px", cursor:"pointer", color:T.gold, fontFamily:T.mono, fontSize:12, fontWeight:700 }}>+ Naya customer add karo</div>
             </div>
           )}
           {form.customer && !custSugg().length && !form.customerId && (
@@ -2202,7 +2199,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
         {form.lines.map((l,li)=>(
           <div key={l.id} style={{ background:T.bg, borderRadius:8, padding:12, marginBottom:10, border:`1px solid ${T.border}` }}>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8, alignItems:"flex-end" }}>
-              <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={["",...""].concat(designs.map(d=>d.designNo))} style={{ minWidth:110 }} />
+              <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={["", ...(designs||[]).map(d=>d.designNo)]} style={{ minWidth:110 }} />
               <Inp label="Colour" value={l.color} onChange={v=>updLine(l.id,"color",v)} placeholder="e.g. Navy" style={{ minWidth:110 }} />
               <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:14 }}>
                 <input type="checkbox" checked={!!l.hasDelivery} onChange={e=>updLine(l.id,"hasDelivery",e.target.checked)} style={{ width:15, height:15, accentColor:T.gold }} />
