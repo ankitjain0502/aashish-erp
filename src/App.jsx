@@ -118,7 +118,7 @@ const T = {
   mono: "'Courier New',monospace", sans: "'Segoe UI',Arial,sans-serif"
 };
 
-const SIZES = ["S","M","L","XL","XXL","3XL","4XL","5XL","6XL","7XL","8XL","9XL"];
+const SIZES = ["S","M","L","XL","XXL","3XL","4XL","5XL","6XL","7XL","8XL","9XL","10XL"];
 // Sort sizes into standard order (S first ... custom/large last), regardless of selection order
 function sortSizes(arr, customSizes = []) {
   const order = [...SIZES, ...customSizes];
@@ -1898,13 +1898,21 @@ function rowToB(r) {
   return { id:r.id, customer:r.customer||"", designNo:r.design_no||"", color:r.color||"", sizes:r.sizes||{}, bookingDate:r.booking_date||"", deliveryDate:r.delivery_date||"", notes:r.notes||"", total:r.total||0, createdBy:r.created_by||"", createdAtStr:r.created_at_str||"",
     orderType:r.order_type||"app", orderNo:r.order_no||"", externalRef:r.external_ref||"", agent:r.agent||"", source:r.source||"", sourcePlace:r.source_place||"",
     advanceAmount:r.advance_amount||0, advanceType:r.advance_type||"", advanceDate:r.advance_date||"", advanceRef:r.advance_ref||"",
-    lines:r.lines||[], customerId:r.customer_id||"" };
+    lines:r.lines||[], customerId:r.customer_id||"",
+    company:r.company||"", mobile:r.mobile||"", whatsapp:r.whatsapp||"", email:r.email||"", gstin:r.gstin||"",
+    billingAddress:r.billing_address||"", shippingAddress:r.shipping_address||"", salesExec:r.sales_exec||"",
+    transport:r.transport||"", destination:r.destination||"", paymentTerms:r.payment_terms||"",
+    status:r.status||"Pending", priority:r.priority||"Normal", specialInstructions:r.special_instructions||"" };
 }
 function bToRow(b) {
   return { id:b.id, customer:b.customer||"", customer_id:b.customerId||"", design_no:b.designNo||"", color:b.color||"", sizes:b.sizes||{}, booking_date:b.bookingDate||"", delivery_date:b.deliveryDate||"", notes:b.notes||"", total:b.total||0, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"",
     order_type:b.orderType||"app", order_no:b.orderNo||"", external_ref:b.externalRef||"", agent:b.agent||"", source:b.source||"", source_place:b.sourcePlace||"",
     advance_amount:b.advanceAmount||0, advance_type:b.advanceType||"", advance_date:b.advanceDate||"", advance_ref:b.advanceRef||"",
-    lines:b.lines||[] };
+    lines:b.lines||[],
+    company:b.company||"", mobile:b.mobile||"", whatsapp:b.whatsapp||"", email:b.email||"", gstin:b.gstin||"",
+    billing_address:b.billingAddress||"", shipping_address:b.shippingAddress||"", sales_exec:b.salesExec||"",
+    transport:b.transport||"", destination:b.destination||"", payment_terms:b.paymentTerms||"",
+    status:b.status||"Pending", priority:b.priority||"Normal", special_instructions:b.specialInstructions||"" };
 }
 
 // ── Bills + Payments converters ───────────────────────────────────────────────
@@ -2009,401 +2017,433 @@ function recordNotification(who, message, designId, forUser) {
 }
 
 function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser }) {
-  const [view, setView] = useState("list");           // list | new | detail | summary
+  const [view, setView] = useState("list");
   const [selId, setSelId] = useState(null);
-  const [summaryTab, setSummaryTab] = useState("customer"); // customer | design
+  const [summaryTab, setSummaryTab] = useState("customer");
   const [searchQ, setSearchQ] = useState("");
   const [customers, setCustomers] = useState([]);
   const [editId, setEditId] = useState(null);
+  const [detailedPrint, setDetailedPrint] = useState(false);
+  const [cutDesign, setCutDesign] = useState("");
 
-  // Load customers once
-  useEffect(() => { loadSuppliers && loadCustList(); }, []);
+  useEffect(() => { loadCustList(); }, []);
   async function loadCustList() {
     try { const r = await dbSelect("customers"); setCustomers((r||[]).map(c=>({ id:c.id, name:c.name||"", gstin:c.gst||"", address:c.address||"", phone:c.phone||"", transport:c.transport||"", paymentTerms:c.payment_terms||"" }))); } catch(e) {}
   }
 
-  // --- Alert helpers ---
-  function daysLeft(dateStr) {
-    if (!dateStr) return null;
-    const d = new Date(dateStr), now = new Date();
-    now.setHours(0,0,0,0); d.setHours(0,0,0,0);
-    return Math.round((d-now)/(1000*60*60*24));
-  }
-  function alertColor(dl) {
-    if (dl===null) return null;
-    if (dl < 0) return "#7B1D1D";   // overdue — dark red
-    if (dl <= 3) return T.red;       // 3 days
-    if (dl <= 10) return T.orange;   // 10 days
-    return T.green;
-  }
-  function alertLabel(dl) {
-    if (dl===null) return "";
-    if (dl < 0) return `⛔ Overdue ${Math.abs(dl)}d`;
-    if (dl===0) return "🔴 Due today!";
-    if (dl<=3) return `🔴 ${dl}d left`;
-    if (dl<=10) return `🟡 ${dl}d left`;
-    return `🟢 ${dl}d left`;
-  }
+  const STATUSES=["Pending","Production","Stitching","Packing","Ready","Dispatched","Delivered","Cancelled"];
+  const SOURCES=["","WhatsApp","Fair/Exhibition","Phone Call","Email","Walk-in","Agent/Distributor","Other"];
+  const ADV=["","Cash","Cheque","Online"];
+  const DEFAULT_NOTE="* Forward order — MRP may vary ±₹100–200.";
 
-  // Auto order no: DDMMYYYY-seq
-  function nextOrderNo() {
-    const today = new Date();
-    const dd=String(today.getDate()).padStart(2,"0"), mm=String(today.getMonth()+1).padStart(2,"0"), yyyy=today.getFullYear();
-    const prefix=`${dd}${mm}${yyyy}`;
-    const todayOrders = bookings.filter(b=>(b.orderNo||"").startsWith(prefix));
-    const seq = todayOrders.length + 1;
-    return `${prefix}-${String(seq).padStart(3,"0")}`;
-  }
+  function daysLeft(d){ if(!d) return null; const x=new Date(d),n=new Date(); n.setHours(0,0,0,0); x.setHours(0,0,0,0); return Math.round((x-n)/86400000); }
+  function alertColor(dl){ if(dl===null) return null; if(dl<0) return "#7B1D1D"; if(dl<=3) return T.red; if(dl<=10) return T.orange; return T.green; }
+  function alertLabel(dl){ if(dl===null) return ""; if(dl<0) return `⛔ ${Math.abs(dl)}d overdue`; if(dl===0) return "🔴 Due today"; if(dl<=3) return `🔴 ${dl}d`; if(dl<=10) return `🟡 ${dl}d`; return `🟢 ${dl}d`; }
 
-  // Blank order form
-  function blankForm() { return { orderType:"app", orderNo:nextOrderNo(), externalRef:"", agent:"", source:"", sourcePlace:"", customer:"", customerId:"", bookingDate:new Date().toISOString().slice(0,10), advanceAmount:"", advanceType:"", advanceDate:"", advanceRef:"", notes:"", lines:[blankLine()] }; }
-  function blankLine() { return { id:`L${Date.now()}${Math.random().toString(36).slice(2,6)}`, designNo:"", color:"", sizes:{}, sizeActive:{}, deliveryDate:"", hasDelivery:false }; }
+  function nextOrderNo(){
+    const t=new Date(), p=`${String(t.getDate()).padStart(2,"0")}${String(t.getMonth()+1).padStart(2,"0")}${t.getFullYear()}`;
+    return `${p}-${String(bookings.filter(b=>(b.orderNo||"").startsWith(p)).length+1).padStart(3,"0")}`;
+  }
+  function blankLine(){ return { id:`L${Date.now()}${Math.random().toString(36).slice(2,5)}`, designNo:"", colour:"", mrp:"", remark:"", sizes:{}, deliveryDate:"", hasDelivery:false }; }
+  function blankForm(){ return { orderType:"app", orderNo:nextOrderNo(), externalRef:"", agent:"", source:"", sourcePlace:"",
+    customer:"", customerId:"", company:"", mobile:"", whatsapp:"", email:"", gstin:"", billingAddress:"", shippingAddress:"",
+    salesExec:"", transport:"", destination:"", paymentTerms:"", status:"Pending", priority:"Normal",
+    bookingDate:new Date().toISOString().slice(0,10), advanceAmount:"", advanceType:"", advanceDate:"", advanceRef:"",
+    specialInstructions:"", notes:"", lines:[blankLine()] }; }
   const [form, setForm] = useState(blankForm);
   const [custNew, setCustNew] = useState(false);
-  const [custForm, setCustForm] = useState({ name:"", gstin:"", address:"", phone:"", transport:"", paymentTerms:"" });
+  const [extraSizes, setExtraSizes] = useState([]);
 
-  // Customer form helpers
-  function updCust(k){ return v => setCustForm(f=>({...f,[k]:v})); }
-  function custSugg() { if (!form.customer.trim()) return []; const q=form.customer.trim().toLowerCase(); return customers.filter(c=>(c.name||"").toLowerCase().includes(q)).slice(0,8); }
+  const activeSizes = [...SIZES, ...extraSizes];
 
-  async function saveCustomer() {
-    if (!custForm.name.trim()) return;
-    const existing = customers.find(c=>(c.name||"").trim().toLowerCase()===custForm.name.trim().toLowerCase());
-    if (existing) { setForm(f=>({...f,customer:existing.name,customerId:existing.id})); setCustNew(false); return; }
-    const id=`C${Date.now()}`; const row={ id, name:custForm.name.trim(), gst:custForm.gstin, address:custForm.address, phone:custForm.phone, transport:custForm.transport, payment_terms:custForm.paymentTerms };
+  // ---- line helpers ----
+  function addLine(){ setForm(f=>({...f, lines:[...f.lines, blankLine()]})); }
+  function remLine(id){ setForm(f=>({...f, lines:f.lines.length>1?f.lines.filter(l=>l.id!==id):f.lines})); }
+  function updLine(id,k,v){ setForm(f=>({...f, lines:f.lines.map(l=>l.id!==id?l:{...l,[k]:v})})); }
+  function updSize(id,sz,v){ setForm(f=>({...f, lines:f.lines.map(l=>l.id!==id?l:{...l, sizes:{...l.sizes,[sz]:v}})})); }
+  function lineTotal(l){ return activeSizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); }
+  function orderTotal(lines){ return (lines||[]).reduce((a,l)=>a+activeSizes.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0); }
+  // sort lines: design, then colour (numeric-aware)
+  function sortedLines(lines){
+    const key=v=>{ const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return isNaN(n)?Infinity:n; };
+    return [...(lines||[])].sort((a,b)=>{
+      const da=key(a.designNo), db=key(b.designNo);
+      if(da!==db) return da-db;
+      if(String(a.designNo)!==String(b.designNo)) return String(a.designNo).localeCompare(String(b.designNo));
+      const ca=key(a.colour), cb=key(b.colour);
+      if(ca!==cb) return ca-cb;
+      return String(a.colour).localeCompare(String(b.colour));
+    });
+  }
+  // auto-fill design details when typed
+  function autoFillDesign(id, dn){
+    updLine(id,"designNo",dn);
+    const d=(designs||[]).find(x=>String(x.designNo).trim()===String(dn).trim());
+    if(d){ setForm(f=>({...f, lines:f.lines.map(l=>l.id!==id?l:{...l, designNo:dn, mrp:l.mrp||d.p1MRP||d.p2MRP||""})})); }
+  }
+
+  // ---- customer ----
+  function custSugg(){ const q=(form.customer||"").trim().toLowerCase(); if(!q) return []; return customers.filter(c=>(c.name||"").toLowerCase().includes(q)).slice(0,6); }
+  function pickCustomer(c){ setForm(f=>({...f, customer:c.name, customerId:c.id, gstin:c.gstin||f.gstin, mobile:c.phone||f.mobile, billingAddress:c.address||f.billingAddress, transport:c.transport||f.transport, paymentTerms:c.paymentTerms||f.paymentTerms })); setCustNew(false); }
+  async function saveCustomer(){
+    const nm=(form.customer||"").trim(); if(!nm){ showToast("Customer naam likho","error"); return; }
+    const ex=customers.find(c=>(c.name||"").trim().toLowerCase()===nm.toLowerCase());
+    const id=ex?ex.id:`C${Date.now()}`;
+    const row={ id, name:nm, gst:form.gstin||null, address:form.billingAddress||null, phone:form.mobile||null, transport:form.transport||null, payment_terms:form.paymentTerms||null };
     await dbUpsert("customers", row);
-    const nc={id,...custForm,name:custForm.name.trim()};
-    setCustomers(p=>[...p,nc]); setForm(f=>({...f,customer:custForm.name.trim(),customerId:id})); setCustNew(false); showToast("Customer saved ✓");
+    setCustomers(p=> ex ? p.map(c=>c.id===id?{...c,name:nm,gstin:form.gstin,address:form.billingAddress,phone:form.mobile,transport:form.transport,paymentTerms:form.paymentTerms}:c) : [...p,{id,name:nm,gstin:form.gstin,address:form.billingAddress,phone:form.mobile,transport:form.transport,paymentTerms:form.paymentTerms}]);
+    setForm(f=>({...f,customerId:id})); setCustNew(false); showToast("Customer saved ✓");
   }
 
-  // Line helpers
-  function addLine(){ setForm(f=>({...f,lines:[...f.lines,blankLine()]})); }
-  function remLine(id){ setForm(f=>({...f,lines:f.lines.filter(l=>l.id!==id)})); }
-  function updLine(id,k,v){ setForm(f=>({...f,lines:f.lines.map(l=>l.id!==id?l:{...l,[k]:v})})); }
-  function updSize(lid,sz,v){ setForm(f=>({...f,lines:f.lines.map(l=>l.id!==lid?l:{...l,sizes:{...l.sizes,[sz]:v}})})); }
-  function toggleSize(lid,sz){ setForm(f=>({...f,lines:f.lines.map(l=>l.id!==lid?l:{...l,sizeActive:{...l.sizeActive,[sz]:!l.sizeActive[sz]},sizes:{...l.sizes,[sz]:l.sizeActive[sz]?"":l.sizes[sz]}})})); }
-  // Quick parse: "M1 L3 XL3 XXL2"
-  function parseQuick(lid,txt){
-    const map={}; const parts=txt.toUpperCase().match(/([A-Z0-9]+)(\d+)/g)||[];
-    parts.forEach(p=>{ const m=p.match(/([A-Z0-9]+)(\d+)/); if(m) map[m[1]]=m[2]; });
-    setForm(f=>({...f,lines:f.lines.map(l=>l.id!==lid?l:{...l,sizes:{...l.sizes,...map},sizeActive:{...l.sizeActive,...Object.fromEntries(Object.keys(map).map(k=>[k,true]))}})}));
-  }
-
-  // Save order
-  async function saveOrder() {
-    if (!form.customer.trim()) { showToast("Customer zaroori hai","error"); return; }
-    if (!form.orderNo.trim()) { showToast("Order no zaroori hai","error"); return; }
-    const dup = bookings.find(b=>b.id!==editId && (b.orderNo||"")===form.orderNo.trim());
-    if (dup) { showToast(`Order no ${form.orderNo} already exists!`,"error"); return; }
-    const total = form.lines.reduce((a,l)=>a+SIZES.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0);
-    const b={ ...form, id:editId||`BK${Date.now()}`, total, createdBy:currentUser, createdAtStr:nowStr() };
+  async function saveOrder(){
+    if(!(form.customer||"").trim()){ showToast("Customer zaroori hai","error"); return; }
+    const no=form.orderType==="app"?form.orderNo:(form.externalRef||form.orderNo);
+    if(!no){ showToast("Order no zaroori hai","error"); return; }
+    if(bookings.find(b=>b.id!==editId && (b.orderNo||"")===form.orderNo && form.orderType==="app")){ showToast("Order no already exists!","error"); return; }
+    const lines=sortedLines(form.lines).filter(l=>l.designNo||lineTotal(l)>0);
+    const b={ ...form, lines, id:editId||`BK${Date.now()}`, total:orderTotal(lines), createdBy:currentUser, createdAtStr:nowStr() };
     await dbUpsert("bookings", bToRow(b));
-    if (editId) setBookings(p=>p.map(x=>x.id===editId?b:x)); else setBookings(p=>[b,...p]);
-    recordActivity(currentUser, editId?"Edited booking":"Added booking", `Order ${b.orderNo}`, `${b.customer} · ${total} pcs`);
-    showToast(editId?"Order updated ✓":"Order added ✓");
+    if(editId) setBookings(p=>p.map(x=>x.id===editId?b:x)); else setBookings(p=>[b,...p]);
+    recordActivity(currentUser, editId?"Edited order":"New order", `${b.orderNo}`, `${b.customer} · ${b.total} pcs`);
+    showToast(editId?"Order updated ✓":"Order saved ✓");
     setForm(blankForm()); setEditId(null); setView("list");
   }
+  async function delOrder(id){ if(!window.confirm("Delete this order?")) return; await dbDelete("bookings",id); setBookings(p=>p.filter(b=>b.id!==id)); setView("list"); showToast("Deleted"); }
+  function startEdit(b){ setForm({...blankForm(), ...b, lines:(b.lines&&b.lines.length?b.lines:[blankLine()])}); setEditId(b.id); setView("new"); }
+  function duplicateOrder(b){ setForm({...blankForm(), ...b, orderNo:nextOrderNo(), id:undefined, lines:(b.lines||[]).map(l=>({...l,id:`L${Date.now()}${Math.random().toString(36).slice(2,5)}`}))}); setEditId(null); setView("new"); showToast("Duplicated — save karo"); }
 
-  async function deleteBooking(id) {
-    if (!window.confirm("Delete this order?")) return;
-    await dbDelete("bookings", id); setBookings(p=>p.filter(b=>b.id!==id)); showToast("Deleted");
-  }
+  // sizes actually used in an order (for print)
+  function usedSizes(lines){ return activeSizes.filter(s=>(lines||[]).some(l=>+(l.sizes||{})[s]>0)); }
 
-  function startEdit(b) { setForm({...b, lines:(b.lines&&b.lines.length?b.lines:[blankLine()])}); setEditId(b.id); setView("new"); }
+  const th={ padding:"7px 6px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", border:`1px solid ${T.border}`, background:T.surface, textAlign:"center", whiteSpace:"nowrap" };
+  const td={ padding:"3px 4px", border:`1px solid ${T.border}`, textAlign:"center" };
+  const cellIn={ background:T.bg, border:"none", color:T.text, fontFamily:T.mono, fontSize:12, width:38, padding:"6px 2px", textAlign:"center", outline:"none" };
+  const txtIn={ background:T.bg, border:"none", color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 6px", width:"100%", boxSizing:"border-box", outline:"none" };
 
-  const SOURCES=["WhatsApp","Fair/Exhibition","Phone Call","Email","Walk-in","Agent/Distributor","Other"];
-  const ADVANCE_TYPES=["Cash","Cheque","Online"];
-
-  // Filter bookings for list
-  const q = searchQ.trim().toLowerCase();
-  const filtered = q ? bookings.filter(b=>(b.customer||"").toLowerCase().includes(q)||(b.orderNo||"").toLowerCase().includes(q)||(b.lines||[]).some(l=>(l.designNo||"").toLowerCase().includes(q))) : bookings;
-
-  // --- NEW ORDER FORM ---
-  if (view==="new") return (
-    <div style={{ maxWidth:800, margin:"0 auto" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+  // ═══════════ NEW / EDIT ORDER ═══════════
+  if(view==="new") return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, flexWrap:"wrap" }}>
         <Btn label="← Back" onClick={()=>{ setView("list"); setForm(blankForm()); setEditId(null); }} color={T.surface} textColor={T.steelLt} small />
         <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold }}>{editId?"Edit Order":"New Order"}</div>
       </div>
 
-      {/* ORDER TYPE */}
-      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
-        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Order Type</div>
-        <div style={{ display:"flex", gap:10, marginBottom:10 }}>
+      {/* ORDER INFO */}
+      <div style={{ background:T.card, borderRadius:12, padding:16, marginBottom:12, border:`1px solid ${T.border}` }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>Order Info</div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
           {["app","external"].map(t=>(
-            <button key={t} onClick={()=>setForm(f=>({...f,orderType:t}))} style={{ background:form.orderType===t?T.gold:T.surface, color:form.orderType===t?T.bg:T.steelLt, border:`1px solid ${form.orderType===t?T.gold:T.border}`, borderRadius:20, padding:"5px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-              {t==="app"?"● App Order":"○ External Order"}
-            </button>
+            <button key={t} onClick={()=>setForm(f=>({...f,orderType:t}))} style={{ background:form.orderType===t?T.gold:T.surface, color:form.orderType===t?"#fff":T.steelLt, border:`1px solid ${form.orderType===t?T.gold:T.border}`, borderRadius:20, padding:"5px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>{t==="app"?"App Order":"External Order"}</button>
           ))}
         </div>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-          <div style={{ flex:1, minWidth:160 }}>
-            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:3 }}>{form.orderType==="app"?"Order No (auto)":"External Ref No *"}</label>
-            <input value={form.orderType==="app"?form.orderNo:form.externalRef} onChange={e=>setForm(f=>form.orderType==="app"?{...f,orderNo:e.target.value}:{...f,externalRef:e.target.value})} readOnly={form.orderType==="app"} style={{ background:form.orderType==="app"?T.bg:T.surface, border:`1px solid ${T.border}`, borderRadius:6, color:form.orderType==="app"?T.steelLt:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 10px", width:"100%", boxSizing:"border-box" }} />
-          </div>
-          {form.orderType==="external" && <Inp label="Agent / Source" value={form.agent} onChange={v=>setForm(f=>({...f,agent:v}))} style={{ flex:1, minWidth:140 }} />}
-          <Inp label="Booking Date" type="date" value={form.bookingDate} onChange={v=>setForm(f=>({...f,bookingDate:v}))} />
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:8 }}>
+          <Inp label="Order No" value={form.orderNo} onChange={v=>setForm(f=>({...f,orderNo:v}))} />
+          <Inp label="Order Date" type="date" value={form.bookingDate} onChange={v=>setForm(f=>({...f,bookingDate:v}))} />
+          <Inp label="Status" value={form.status} onChange={v=>setForm(f=>({...f,status:v}))} options={STATUSES} />
+          <Inp label="Priority" value={form.priority} onChange={v=>setForm(f=>({...f,priority:v}))} options={["Normal","Urgent"]} />
+          {form.orderType==="external" && <>
+            <Inp label="External Ref No" value={form.externalRef} onChange={v=>setForm(f=>({...f,externalRef:v}))} />
+            <Inp label="Agent" value={form.agent} onChange={v=>setForm(f=>({...f,agent:v}))} />
+            <Inp label="Source" value={form.source} onChange={v=>setForm(f=>({...f,source:v}))} options={SOURCES} />
+            <Inp label="Place" value={form.sourcePlace} onChange={v=>setForm(f=>({...f,sourcePlace:v}))} />
+          </>}
         </div>
-        {form.orderType==="external" && (
-          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginTop:10 }}>
-            <Inp label="Source" value={form.source} onChange={v=>setForm(f=>({...f,source:v}))} options={["", ...SOURCES]} style={{ minWidth:160 }} />
-            <Inp label="Place (optional)" value={form.sourcePlace} onChange={v=>setForm(f=>({...f,sourcePlace:v}))} placeholder="e.g. Ahmedabad Fair" style={{ flex:1 }} />
-          </div>
-        )}
       </div>
 
       {/* CUSTOMER */}
-      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
-        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Customer</div>
+      <div style={{ background:T.card, borderRadius:12, padding:16, marginBottom:12, border:`1px solid ${T.border}` }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>Customer Details</div>
         <div style={{ position:"relative", marginBottom:8 }}>
-          <input value={form.customer} onChange={e=>{ setForm(f=>({...f,customer:e.target.value,customerId:""})); setCustNew(false); }} placeholder="Customer naam type karo…" style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.sans, fontSize:14, padding:"10px 12px", width:"100%", boxSizing:"border-box" }} />
+          <Inp label="Customer Name *" value={form.customer} onChange={v=>{ setForm(f=>({...f,customer:v,customerId:""})); }} placeholder="type karo…" />
           {custSugg().length>0 && (
-            <div style={{ position:"absolute", top:"100%", left:0, right:0, background:T.card, border:`1px solid ${T.gold}`, borderRadius:8, zIndex:20, boxShadow:"0 8px 24px #0004" }}>
-              {custSugg().map(c=>(
-                <div key={c.id} onClick={()=>{ setForm(f=>({...f,customer:c.name,customerId:c.id})); setCustNew(false); }} style={{ padding:"10px 14px", cursor:"pointer", borderBottom:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:13, color:T.text }}>
-                  <b>{c.name}</b>{c.gstin?<span style={{color:T.steelLt,fontSize:11}}> · {c.gstin}</span>:null}
-                  {c.transport?<span style={{color:T.steelLt,fontSize:11}}> · {c.transport}</span>:null}
-                </div>
-              ))}
-              <div onClick={()=>{ setCustForm({name:form.customer,gstin:"",address:"",phone:"",transport:"",paymentTerms:""}); setCustNew(true); }} style={{ padding:"10px 14px", cursor:"pointer", color:T.gold, fontFamily:T.mono, fontSize:12, fontWeight:700 }}>+ Naya customer add karo</div>
-            </div>
-          )}
-          {form.customer && !custSugg().length && !form.customerId && (
-            <div style={{ marginTop:6 }}>
-              <Btn label="+ Naya customer add karo" onClick={()=>{ setCustForm({name:form.customer,gstin:"",address:"",phone:"",transport:"",paymentTerms:""}); setCustNew(true); }} color={T.gold} textColor={T.bg} small />
+            <div style={{ position:"absolute", top:"100%", left:0, right:0, background:T.card, border:`1px solid ${T.gold}`, borderRadius:8, zIndex:30, boxShadow:"0 8px 24px rgba(90,60,140,.2)" }}>
+              {custSugg().map(c=><div key={c.id} onClick={()=>pickCustomer(c)} style={{ padding:"9px 12px", cursor:"pointer", borderBottom:`1px solid ${T.border}`, fontSize:13, color:T.text }}><b>{c.name}</b>{c.gstin?<span style={{color:T.steelLt,fontSize:11}}> · {c.gstin}</span>:null}</div>)}
             </div>
           )}
         </div>
-        {custNew && (
-          <div style={{ background:T.bg, borderRadius:8, padding:12, border:`1px solid ${T.gold}`, marginTop:8 }}>
-            <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", marginBottom:8 }}>Naya Customer Details</div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
-              <Inp label="Name *" value={custForm.name} onChange={updCust("name")} />
-              <Inp label="GSTIN" value={custForm.gstin} onChange={updCust("gstin")} />
-              <Inp label="Phone" value={custForm.phone} onChange={updCust("phone")} />
-              <Inp label="Transport" value={custForm.transport} onChange={updCust("transport")} />
-              <Inp label="Payment Terms" value={custForm.paymentTerms} onChange={updCust("paymentTerms")} placeholder="e.g. 30 days" />
-              <Inp label="Address" value={custForm.address} onChange={updCust("address")} />
-            </div>
-            <div style={{ marginTop:10, display:"flex", gap:8 }}>
-              <Btn label="Save Customer" onClick={saveCustomer} />
-              <Btn label="Cancel" onClick={()=>setCustNew(false)} color={T.surface} textColor={T.steelLt} small />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* LINES (designs) */}
-      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
-        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:10 }}>Designs in this Order</div>
-        {form.lines.map((l,li)=>(
-          <div key={l.id} style={{ background:T.bg, borderRadius:8, padding:12, marginBottom:10, border:`1px solid ${T.border}` }}>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8, alignItems:"flex-end" }}>
-              <Inp label="Design No" value={l.designNo} onChange={v=>updLine(l.id,"designNo",v)} options={["", ...(designs||[]).map(d=>d.designNo)]} style={{ minWidth:110 }} />
-              <Inp label="Colour" value={l.color} onChange={v=>updLine(l.id,"color",v)} placeholder="e.g. Navy" style={{ minWidth:110 }} />
-              <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:14 }}>
-                <input type="checkbox" checked={!!l.hasDelivery} onChange={e=>updLine(l.id,"hasDelivery",e.target.checked)} style={{ width:15, height:15, accentColor:T.gold }} />
-                <label style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Delivery Date</label>
-              </div>
-              {l.hasDelivery && <Inp label="Date" type="date" value={l.deliveryDate} onChange={v=>updLine(l.id,"deliveryDate",v)} />}
-              {form.lines.length>1 && <Btn label="✕" onClick={()=>remLine(l.id)} color={T.red+"22"} textColor={T.red} small />}
-            </div>
-            {/* Size checkboxes */}
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
-              {SIZES.map(s=>(
-                <button key={s} onClick={()=>toggleSize(l.id,s)} style={{ background:l.sizeActive&&l.sizeActive[s]?T.gold:T.surface, color:l.sizeActive&&l.sizeActive[s]?T.bg:T.steelLt, border:`1px solid ${l.sizeActive&&l.sizeActive[s]?T.gold:T.border}`, borderRadius:6, fontFamily:T.mono, fontSize:11, fontWeight:700, padding:"4px 10px", cursor:"pointer" }}>{s}</button>
-              ))}
-            </div>
-            {/* Quick entry */}
-            <div style={{ display:"flex", gap:8, marginBottom:8, alignItems:"flex-end" }}>
-              <div style={{ flex:1 }}>
-                <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", display:"block", marginBottom:3 }}>Quick Entry (e.g. M1 L3 XL3 XXL2)</label>
-                <input placeholder="M1 L3 XL3 XXL2…" onBlur={e=>{ if(e.target.value.trim()) parseQuick(l.id,e.target.value); e.target.value=""; }} style={{ background:T.surface, border:`1px solid ${T.gold}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:13, padding:"7px 10px", width:"100%", boxSizing:"border-box" }} />
-              </div>
-            </div>
-            {/* Size inputs (only active) */}
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              {SIZES.filter(s=>l.sizeActive&&l.sizeActive[s]).map(s=>(
-                <div key={s} style={{ textAlign:"center" }}>
-                  <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, marginBottom:2 }}>{s}</div>
-                  <input type="number" value={(l.sizes||{})[s]||""} onChange={e=>updSize(l.id,s,e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:13, width:50, padding:"6px 4px", textAlign:"center" }} />
-                </div>
-              ))}
-              {(!l.sizeActive||!Object.values(l.sizeActive).some(Boolean)) && <div style={{ fontFamily:T.mono, fontSize:11, color:T.textDim, padding:"6px 0" }}>Sizes select karo (upar click) ya quick entry use karo</div>}
-            </div>
-            <div style={{ fontFamily:T.mono, fontSize:11, color:T.gold, marginTop:6, textAlign:"right" }}>
-              Total: {SIZES.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0)} pcs
-            </div>
-          </div>
-        ))}
-        <Btn label="+ Add Design / Colour" onClick={addLine} color={T.surface} textColor={T.steelLt} small />
-      </div>
-
-      {/* ADVANCE */}
-      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
-        <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:10 }}>Advance Received (optional)</div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          <Inp label="Type" value={form.advanceType} onChange={v=>setForm(f=>({...f,advanceType:v}))} options={["", ...ADVANCE_TYPES]} style={{ minWidth:120 }} />
-          <Inp label="Amount (Rs.)" type="number" value={form.advanceAmount} onChange={v=>setForm(f=>({...f,advanceAmount:v}))} style={{ minWidth:120 }} />
-          <Inp label="Date" type="date" value={form.advanceDate} onChange={v=>setForm(f=>({...f,advanceDate:v}))} />
-          <Inp label="Ref / Cheque No" value={form.advanceRef} onChange={v=>setForm(f=>({...f,advanceRef:v}))} style={{ minWidth:140 }} />
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:8 }}>
+          <Inp label="Company" value={form.company} onChange={v=>setForm(f=>({...f,company:v}))} />
+          <Inp label="Mobile" value={form.mobile} onChange={v=>setForm(f=>({...f,mobile:v}))} />
+          <Inp label="WhatsApp" value={form.whatsapp} onChange={v=>setForm(f=>({...f,whatsapp:v}))} />
+          <Inp label="Email" value={form.email} onChange={v=>setForm(f=>({...f,email:v}))} />
+          <Inp label="GST No" value={form.gstin} onChange={v=>setForm(f=>({...f,gstin:v.toUpperCase()}))} />
+          <Inp label="Sales Executive" value={form.salesExec} onChange={v=>setForm(f=>({...f,salesExec:v}))} />
+          <Inp label="Transport" value={form.transport} onChange={v=>setForm(f=>({...f,transport:v}))} />
+          <Inp label="Destination" value={form.destination} onChange={v=>setForm(f=>({...f,destination:v}))} />
+          <Inp label="Payment Terms" value={form.paymentTerms} onChange={v=>setForm(f=>({...f,paymentTerms:v}))} placeholder="e.g. 30 days" />
+          <Inp label="Billing Address" value={form.billingAddress} onChange={v=>setForm(f=>({...f,billingAddress:v}))} />
+          <Inp label="Shipping Address" value={form.shippingAddress} onChange={v=>setForm(f=>({...f,shippingAddress:v}))} />
         </div>
+        <div style={{ marginTop:10 }}><Btn label="💾 Save Customer" onClick={saveCustomer} color={T.surface} textColor={T.gold} small /></div>
       </div>
 
-      {/* NOTES */}
-      <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:16 }}>
-        <Inp label="Notes (optional)" value={form.notes} onChange={v=>setForm(f=>({...f,notes:v}))} placeholder="koi bhi note…" />
+      {/* ORDER ITEMS TABLE */}
+      <div style={{ background:T.card, borderRadius:12, padding:16, marginBottom:12, border:`1px solid ${T.border}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", letterSpacing:1 }}>Order Items</div>
+          <div style={{ display:"flex", gap:6 }}>
+            <Btn label="+ Size" onClick={()=>{ const s=window.prompt("Naya size (e.g. 11XL):"); if(s&&!activeSizes.includes(s.toUpperCase())) setExtraSizes(p=>[...p,s.toUpperCase()]); }} color={T.surface} textColor={T.steelLt} small />
+            <Btn label="+ Add Line" onClick={addLine} small />
+          </div>
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ borderCollapse:"collapse", width:"100%", minWidth:900 }}>
+            <thead><tr>
+              <th style={{...th, width:28}}>#</th>
+              <th style={{...th, minWidth:80}}>Design</th>
+              <th style={{...th, minWidth:80}}>Colour</th>
+              <th style={{...th, minWidth:70}}>MRP</th>
+              <th style={{...th, minWidth:90}}>Remark</th>
+              {activeSizes.map(s=><th key={s} style={{...th, width:40}}>{s}</th>)}
+              <th style={{...th, width:52}}>Total</th>
+              <th style={{...th, width:34}}></th>
+            </tr></thead>
+            <tbody>
+              {form.lines.map((l,i)=>(
+                <tr key={l.id} style={{ background: i%2?T.surface:T.bg }}>
+                  <td style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{i+1}</td>
+                  <td style={td}><input value={l.designNo} onChange={e=>autoFillDesign(l.id,e.target.value)} list="bk-designs" placeholder="design" style={txtIn} /></td>
+                  <td style={td}><input value={l.colour} onChange={e=>updLine(l.id,"colour",e.target.value)} placeholder="colour" style={txtIn} /></td>
+                  <td style={td}><input type="number" value={l.mrp} onChange={e=>updLine(l.id,"mrp",e.target.value)} placeholder="₹" style={txtIn} /></td>
+                  <td style={td}><input value={l.remark} onChange={e=>updLine(l.id,"remark",e.target.value)} placeholder="remark" style={txtIn} /></td>
+                  {activeSizes.map(s=>(
+                    <td key={s} style={td}><input type="number" value={(l.sizes||{})[s]||""} onChange={e=>updSize(l.id,s,e.target.value)} style={cellIn} /></td>
+                  ))}
+                  <td style={{...td, fontFamily:T.mono, fontSize:13, fontWeight:700, color:T.gold}}>{lineTotal(l)||""}</td>
+                  <td style={td}><span onClick={()=>remLine(l.id)} style={{ color:T.red, cursor:"pointer", fontSize:14 }}>✕</span></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr style={{ background:T.surface }}>
+              <td colSpan={5} style={{...td, textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt, paddingRight:10}}>TOTAL</td>
+              {activeSizes.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{form.lines.reduce((a,l)=>a+(+(l.sizes||{})[s]||0),0)||""}</td>)}
+              <td style={{...td, fontFamily:T.mono, fontSize:14, fontWeight:900, color:T.gold}}>{orderTotal(form.lines)}</td>
+              <td style={td}></td>
+            </tr></tfoot>
+          </table>
+        </div>
+        <datalist id="bk-designs">{(designs||[]).map(d=><option key={d.id} value={d.designNo} />)}</datalist>
       </div>
 
-      <div style={{ display:"flex", gap:10 }}>
+      {/* DELIVERY + ADVANCE + NOTES */}
+      <div style={{ background:T.card, borderRadius:12, padding:16, marginBottom:12, border:`1px solid ${T.border}` }}>
+        <div style={{ fontFamily:T.mono, fontSize:9, color:T.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>Delivery · Advance · Notes</div>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:10, alignItems:"center" }}>
+          <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer" }}>
+            <input type="checkbox" checked={!!form.hasDelivery} onChange={e=>setForm(f=>({...f,hasDelivery:e.target.checked}))} style={{ width:15, height:15, accentColor:T.gold }} />
+            Delivery Date
+          </label>
+          {form.hasDelivery && <Inp label="Date" type="date" value={form.deliveryDate||""} onChange={v=>setForm(f=>({...f,deliveryDate:v}))} />}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:8, marginBottom:10 }}>
+          <Inp label="Advance Type" value={form.advanceType} onChange={v=>setForm(f=>({...f,advanceType:v}))} options={ADV} />
+          <Inp label="Advance Amount" type="number" value={form.advanceAmount} onChange={v=>setForm(f=>({...f,advanceAmount:v}))} />
+          <Inp label="Advance Date" type="date" value={form.advanceDate} onChange={v=>setForm(f=>({...f,advanceDate:v}))} />
+          <Inp label="Ref / Cheque No" value={form.advanceRef} onChange={v=>setForm(f=>({...f,advanceRef:v}))} />
+        </div>
+        <Inp label="Special Instructions" value={form.specialInstructions} onChange={v=>setForm(f=>({...f,specialInstructions:v}))} placeholder="koi khaas hidayat…" />
+      </div>
+
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:30 }}>
         <Btn label={editId?"Update Order":"Save Order"} onClick={saveOrder} />
         <Btn label="Cancel" onClick={()=>{ setView("list"); setForm(blankForm()); setEditId(null); }} color={T.surface} textColor={T.steelLt} small />
       </div>
     </div>
   );
 
-  // --- ORDER LIST ---
-  if (view==="list") return (
+  // ═══════════ ORDER DETAIL ═══════════
+  if(view==="detail"){
+    const b=bookings.find(x=>x.id===selId);
+    if(!b) return <Btn label="← Back" onClick={()=>setView("list")} />;
+    const lines=sortedLines(b.lines||[]);
+    const cols=usedSizes(lines);
+    const dl=b.hasDelivery?daysLeft(b.deliveryDate):null;
+    const ac=alertColor(dl);
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center", flexWrap:"wrap" }} className="no-print">
+          <Btn label="← Back" onClick={()=>setView("list")} color={T.surface} textColor={T.steelLt} small />
+          <div style={{ flex:1, fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold }}>{b.orderNo}{b.externalRef?` · ${b.externalRef}`:""}</div>
+          <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer" }}>
+            <input type="checkbox" checked={detailedPrint} onChange={e=>setDetailedPrint(e.target.checked)} style={{ width:15,height:15,accentColor:T.gold }} />
+            Detailed
+          </label>
+          <Btn label="🖨 Print / PDF" onClick={()=>window.print()} small />
+          <Btn label="✏ Edit" onClick={()=>startEdit(b)} small />
+          <Btn label="⧉ Duplicate" onClick={()=>duplicateOrder(b)} color={T.surface} textColor={T.steelLt} small />
+          <Btn label="🗑" onClick={()=>delOrder(b.id)} color={T.red+"22"} textColor={T.red} small />
+        </div>
+
+        <div style={{ background:T.card, borderRadius:12, padding:18, border:`1px solid ${T.border}` }}>
+          <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:14, paddingBottom:12, borderBottom:`1px solid ${T.border}` }}>
+            <div>
+              <div style={{ fontFamily:T.mono, fontSize:17, fontWeight:900, color:T.text }}>{b.customer}</div>
+              {b.company && <div style={{ fontSize:12, color:T.steelLt }}>{b.company}</div>}
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:4 }}>
+                {b.mobile?`📞 ${b.mobile}  `:""}{b.gstin?`GST: ${b.gstin}`:""}
+              </div>
+              {b.billingAddress && <div style={{ fontSize:11, color:T.steelLt, marginTop:2 }}>{b.billingAddress}</div>}
+            </div>
+            <div style={{ textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt }}>
+              <div style={{ fontSize:13, color:T.gold, fontWeight:700 }}>{b.orderNo}</div>
+              <div>{b.bookingDate}</div>
+              {b.status && <div>Status: <b style={{color:T.text}}>{b.status}</b></div>}
+              {b.priority==="Urgent" && <div style={{ color:T.red, fontWeight:700 }}>⚡ URGENT</div>}
+              {b.transport && <div>Transport: {b.transport}</div>}
+              {b.destination && <div>Dest: {b.destination}</div>}
+              {b.paymentTerms && <div>Payment: {b.paymentTerms}</div>}
+              {b.hasDelivery && b.deliveryDate && <div style={{ color:ac }}>🗓 {b.deliveryDate} {alertLabel(dl)}</div>}
+            </div>
+          </div>
+
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ borderCollapse:"collapse", width:"100%" }}>
+              <thead><tr>
+                <th style={th}>Design</th>
+                <th style={th}>Colour</th>
+                {detailedPrint && <th style={th}>MRP</th>}
+                {detailedPrint && <th style={th}>Remark</th>}
+                {cols.map(s=><th key={s} style={th}>{s}</th>)}
+                <th style={th}>Total</th>
+              </tr></thead>
+              <tbody>
+                {lines.map((l,i)=>(
+                  <tr key={l.id||i} style={{ background: i%2?T.surface:T.bg }}>
+                    <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{l.designNo}</td>
+                    <td style={{...td, fontFamily:T.mono, color:T.text}}>{l.colour}</td>
+                    {detailedPrint && <td style={{...td, fontFamily:T.mono, color:T.text}}>{l.mrp?`₹${l.mrp}`:"—"}</td>}
+                    {detailedPrint && <td style={{...td, fontSize:11, color:T.steelLt}}>{l.remark||"—"}</td>}
+                    {cols.map(s=><td key={s} style={{...td, fontFamily:T.mono, color:T.text}}>{(l.sizes||{})[s]||""}</td>)}
+                    <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{lineTotal(l)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr style={{ background:T.surface }}>
+                <td colSpan={detailedPrint?4:2} style={{...td, textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt, paddingRight:10}}>TOTAL</td>
+                {cols.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{lines.reduce((a,l)=>a+(+(l.sizes||{})[s]||0),0)||""}</td>)}
+                <td style={{...td, fontFamily:T.mono, fontSize:14, fontWeight:900, color:T.gold}}>{orderTotal(lines)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+
+          {(+b.advanceAmount>0) && <div style={{ marginTop:12, fontFamily:T.mono, fontSize:12, color:T.green }}>💰 Advance: ₹{b.advanceAmount} · {b.advanceType}{b.advanceDate?` · ${b.advanceDate}`:""}{b.advanceRef?` · ${b.advanceRef}`:""}</div>}
+          {b.specialInstructions && <div style={{ marginTop:10, fontSize:12, color:T.text }}>📝 {b.specialInstructions}</div>}
+          <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${T.border}`, fontFamily:T.mono, fontSize:10, color:T.steelLt, fontStyle:"italic" }}>{DEFAULT_NOTE}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ═══════════ SUMMARY / CUTTING ═══════════
+  if(view==="summary"){
+    const allLines=[];
+    bookings.forEach(b=>(b.lines||[]).forEach(l=>allLines.push({...l, customer:b.customer, orderNo:b.orderNo})));
+    const cutLines=cutDesign.trim()?allLines.filter(l=>String(l.designNo).trim().toLowerCase()===cutDesign.trim().toLowerCase()):[];
+    const byColour={};
+    cutLines.forEach(l=>{ const c=l.colour||"—"; if(!byColour[c]) byColour[c]={colour:c,sizes:{},total:0}; activeSizes.forEach(s=>{ byColour[c].sizes[s]=(byColour[c].sizes[s]||0)+(+(l.sizes||{})[s]||0); }); byColour[c].total+=activeSizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); });
+    const cutCols=activeSizes.filter(s=>Object.values(byColour).some(c=>c.sizes[s]>0));
+
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }} className="no-print">
+          <button onClick={()=>setView("list")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Orders</button>
+          <button onClick={()=>setSummaryTab("customer")} style={{ background:summaryTab==="customer"?T.gold:T.surface, color:summaryTab==="customer"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>By Customer</button>
+          <button onClick={()=>setSummaryTab("cutting")} style={{ background:summaryTab==="cutting"?T.gold:T.surface, color:summaryTab==="cutting"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>✂️ Cutting Sheet</button>
+        </div>
+
+        {summaryTab==="cutting" && (
+          <div>
+            <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center", flexWrap:"wrap" }} className="no-print">
+              <input value={cutDesign} onChange={e=>setCutDesign(e.target.value)} placeholder="Design number daalo…" list="bk-designs2" style={{ flex:1, minWidth:180, background:T.surface, border:`2px solid ${T.gold}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:14, padding:"10px 14px", outline:"none" }} />
+              <datalist id="bk-designs2">{[...new Set(allLines.map(l=>l.designNo))].filter(Boolean).map(d=><option key={d} value={d} />)}</datalist>
+              {cutLines.length>0 && <Btn label="🖨 Print" onClick={()=>window.print()} small />}
+            </div>
+            {!cutDesign.trim() && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono, fontSize:12 }}>Design number daalo — us design ka poora order colour-wise dikhega</div>}
+            {cutDesign.trim() && cutLines.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>Is design ka koi order nahi mila.</div>}
+            {cutLines.length>0 && (
+              <div style={{ background:T.card, borderRadius:12, padding:18, border:`1px solid ${T.border}` }}>
+                <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:T.gold, marginBottom:12 }}>CUTTING SHEET — DESIGN {cutDesign}</div>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%" }}>
+                    <thead><tr><th style={th}>Colour</th>{cutCols.map(s=><th key={s} style={th}>{s}</th>)}<th style={th}>Total</th></tr></thead>
+                    <tbody>
+                      {Object.values(byColour).sort((a,b)=>{ const n=v=>{const x=parseFloat(String(v).replace(/[^\d.]/g,"")); return isNaN(x)?Infinity:x;}; return n(a.colour)-n(b.colour)||String(a.colour).localeCompare(String(b.colour)); }).map((c,i)=>(
+                        <tr key={c.colour} style={{ background:i%2?T.surface:T.bg }}>
+                          <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.text}}>{c.colour}</td>
+                          {cutCols.map(s=><td key={s} style={{...td, fontFamily:T.mono}}>{c.sizes[s]||""}</td>)}
+                          <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{c.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot><tr style={{ background:T.surface }}>
+                      <td style={{...td, textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt}}>TOTAL</td>
+                      {cutCols.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontWeight:700, color:T.text}}>{Object.values(byColour).reduce((a,c)=>a+(c.sizes[s]||0),0)||""}</td>)}
+                      <td style={{...td, fontFamily:T.mono, fontSize:15, fontWeight:900, color:T.gold}}>{Object.values(byColour).reduce((a,c)=>a+c.total,0)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+                <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
+                  <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:6 }}>Orders in this sheet</div>
+                  {[...new Set(cutLines.map(l=>`${l.customer}||${l.orderNo}`))].map(k=>{
+                    const [cust,ord]=k.split("||");
+                    const t=cutLines.filter(l=>l.customer===cust&&l.orderNo===ord).reduce((a,l)=>a+activeSizes.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0);
+                    return <div key={k} style={{ fontFamily:T.mono, fontSize:11, color:T.text }}>· {cust} <span style={{color:T.steelLt}}>({ord})</span> — <b style={{color:T.gold}}>{t} pcs</b></div>;
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {summaryTab==="customer" && (() => {
+          const byC={};
+          bookings.forEach(b=>{ const k=b.customer||"—"; if(!byC[k]) byC[k]={customer:k,orders:[],total:0}; byC[k].orders.push(b); byC[k].total+=orderTotal(b.lines); });
+          return Object.values(byC).map(c=>(
+            <div key={c.customer} style={{ background:T.card, borderRadius:12, padding:16, marginBottom:10, border:`1px solid ${T.border}` }}>
+              <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.text, marginBottom:8 }}>{c.customer} <span style={{ color:T.gold }}>· {c.total} pcs</span></div>
+              {c.orders.map(b=>(
+                <div key={b.id} onClick={()=>{ setSelId(b.id); setView("detail"); }} style={{ background:T.surface, borderRadius:8, padding:10, marginBottom:6, cursor:"pointer" }}>
+                  <div style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>{b.orderNo} · {b.bookingDate} · {orderTotal(b.lines)} pcs</div>
+                  <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:2 }}>{[...new Set((b.lines||[]).map(l=>l.designNo))].filter(Boolean).join(", ")}</div>
+                </div>
+              ))}
+            </div>
+          ));
+        })()}
+      </div>
+    );
+  }
+
+  // ═══════════ LIST ═══════════
+  const q=searchQ.trim().toLowerCase();
+  const filtered=q?bookings.filter(b=>(b.customer||"").toLowerCase().includes(q)||(b.orderNo||"").toLowerCase().includes(q)||(b.lines||[]).some(l=>String(l.designNo).toLowerCase().includes(q))):bookings;
+  return (
     <div>
       <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
-        <button onClick={()=>setView("list")} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Bookings</button>
-        <button onClick={()=>setView("summary")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Demand Summary</button>
-        <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search customer / design / order…" style={{ flex:1, minWidth:180, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
+        <button onClick={()=>setView("list")} style={{ background:T.gold, color:"#fff", border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Orders</button>
+        <button onClick={()=>{ setSummaryTab("customer"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Summary</button>
+        <button onClick={()=>{ setSummaryTab("cutting"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>✂️ Cutting</button>
+        <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search customer / design / order…" style={{ flex:1, minWidth:170, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
         <Btn label="+ New Order" onClick={()=>{ setForm(blankForm()); setEditId(null); setView("new"); }} />
       </div>
 
-      {filtered.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>No bookings yet.</div>}
+      {filtered.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>No orders yet.</div>}
       {filtered.map(b=>{
-        const total=b.lines?.length?b.lines.reduce((a,l)=>a+SIZES.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0):b.total;
-        const nearestDl = b.lines?.length ? b.lines.filter(l=>l.hasDelivery&&l.deliveryDate).map(l=>daysLeft(l.deliveryDate)).filter(d=>d!==null).sort((a,z)=>a-z)[0] : daysLeft(b.deliveryDate);
-        const ac = alertColor(nearestDl);
+        const dl=b.hasDelivery?daysLeft(b.deliveryDate):null; const ac=alertColor(dl);
         return (
-          <div key={b.id} onClick={()=>{ setSelId(b.id); setView("detail"); }} style={{ background:T.card, borderRadius:10, padding:"12px 16px", marginBottom:10, border:`1px solid ${ac||T.border}`, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+          <div key={b.id} onClick={()=>{ setSelId(b.id); setView("detail"); }} style={{ background:T.card, borderRadius:10, padding:"12px 16px", marginBottom:10, border:`1px solid ${ac||T.border}`, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
             <div>
-              <div style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:14 }}>{b.orderNo||b.externalRef||b.id}</div>
-              <div style={{ fontWeight:700, color:T.text, fontSize:14, marginTop:2 }}>{b.customer}</div>
-              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:2 }}>
-                {b.bookingDate} · {total} pcs
-                {b.orderType==="external"&&b.source?` · 📋 ${b.source}${b.sourcePlace?` (${b.sourcePlace})`:""}` : ""}
-                {b.advanceAmount>0?` · 💰 Rs.${b.advanceAmount} ${b.advanceType}`:""}
-              </div>
+              <div style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:13 }}>{b.orderNo}{b.externalRef?` · ${b.externalRef}`:""}</div>
+              <div style={{ fontWeight:700, color:T.text, fontSize:14, marginTop:2 }}>{b.customer}{b.priority==="Urgent"?<span style={{color:T.red,fontSize:11}}> ⚡</span>:null}</div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:2 }}>{b.bookingDate} · {orderTotal(b.lines)} pcs · {(b.lines||[]).length} lines{b.status?` · ${b.status}`:""}</div>
             </div>
-            <div style={{ textAlign:"right" }}>
-              {ac && <div style={{ fontFamily:T.mono, fontSize:11, fontWeight:700, color:ac }}>{alertLabel(nearestDl)}</div>}
-              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:4 }}>{(b.lines||[]).length} design{(b.lines||[]).length!==1?"s":""}</div>
-            </div>
+            {ac && <div style={{ fontFamily:T.mono, fontSize:11, fontWeight:700, color:ac }}>{alertLabel(dl)}</div>}
           </div>
         );
       })}
     </div>
   );
-
-  // --- ORDER DETAIL ---
-  if (view==="detail") {
-    const b = bookings.find(x=>x.id===selId);
-    if (!b) return <Btn label="← Back" onClick={()=>setView("list")} />;
-    const cust = customers.find(c=>c.id===b.customerId||c.name===b.customer);
-    return (
-      <div style={{ maxWidth:700, margin:"0 auto" }}>
-        <div style={{ display:"flex", gap:8, marginBottom:16, alignItems:"center" }}>
-          <Btn label="← Back" onClick={()=>setView("list")} color={T.surface} textColor={T.steelLt} small />
-          <div style={{ flex:1, fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold }}>{b.orderNo||b.externalRef}</div>
-          <Btn label="✏ Edit" onClick={()=>startEdit(b)} small />
-          <Btn label="🗑 Delete" onClick={()=>deleteBooking(b.id)} color={T.red+"22"} textColor={T.red} small />
-        </div>
-
-        <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
-          <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:900, color:T.text, marginBottom:4 }}>{b.customer}</div>
-          {cust && <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>{cust.gstin?`GSTIN: ${cust.gstin} · `:""}Payment: {cust.paymentTerms||"—"} · Transport: {cust.transport||"—"}</div>}
-          <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:4 }}>Booking: {b.bookingDate}{b.orderType==="external"?` · ${b.source||""}${b.sourcePlace?` · ${b.sourcePlace}`:""}`:""}</div>
-          {b.agent && <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>Agent: {b.agent}</div>}
-        </div>
-
-        {(b.lines||[]).map((l,i)=>{
-          const dl = l.hasDelivery ? daysLeft(l.deliveryDate) : null;
-          const ac = alertColor(dl);
-          const sizes = SIZES.filter(s=>(+(l.sizes||{})[s]||0)>0);
-          return (
-            <div key={l.id||i} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10, borderLeft:`4px solid ${ac||T.steelLt}` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                <div>
-                  <span style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:15 }}>📦 {l.designNo||"—"}</span>
-                  {l.color && <span style={{ fontFamily:T.mono, color:T.steelLt, fontSize:13 }}> — {l.color}</span>}
-                </div>
-                {ac && <div style={{ fontFamily:T.mono, fontSize:11, fontWeight:700, color:ac }}>{alertLabel(dl)}</div>}
-              </div>
-              <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginTop:8 }}>
-                {sizes.map(s=><div key={s} style={{ fontFamily:T.mono, fontSize:13, color:T.text }}><span style={{color:T.steelLt}}>{s}: </span><b>{(l.sizes||{})[s]}</b></div>)}
-                <div style={{ fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>= {sizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0)} pcs</div>
-              </div>
-              {l.hasDelivery && l.deliveryDate && <div style={{ fontFamily:T.mono, fontSize:11, color:ac||T.steelLt, marginTop:6 }}>🗓 Delivery: {l.deliveryDate}</div>}
-            </div>
-          );
-        })}
-
-        {(+b.advanceAmount>0) && (
-          <div style={{ background:T.surface, borderRadius:10, padding:14, marginBottom:12 }}>
-            <div style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt, textTransform:"uppercase", marginBottom:4 }}>Advance Received</div>
-            <div style={{ fontFamily:T.mono, fontSize:14, color:T.green, fontWeight:700 }}>💰 Rs.{b.advanceAmount} · {b.advanceType}{b.advanceDate?` · ${b.advanceDate}`:""}{b.advanceRef?` · Ref: ${b.advanceRef}`:""}</div>
-          </div>
-        )}
-        {b.notes && <div style={{ background:T.surface, borderRadius:10, padding:14, fontFamily:T.mono, fontSize:12, color:T.steelLt }}>📝 {b.notes}</div>}
-      </div>
-    );
-  }
-
-  // --- SUMMARY ---
-  return (
-    <div>
-      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
-        <button onClick={()=>setView("list")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Bookings</button>
-        <button onClick={()=>setView("summary")} style={{ background:T.gold, color:T.bg, border:"none", borderRadius:20, padding:"6px 18px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Demand Summary</button>
-        <button onClick={()=>setSummaryTab("customer")} style={{ background:summaryTab==="customer"?T.steel:T.surface, color:summaryTab==="customer"?T.bg:T.steelLt, border:"none", borderRadius:16, padding:"5px 14px", fontFamily:T.mono, fontSize:11, cursor:"pointer" }}>By Customer</button>
-        <button onClick={()=>setSummaryTab("design")} style={{ background:summaryTab==="design"?T.steel:T.surface, color:summaryTab==="design"?T.bg:T.steelLt, border:"none", borderRadius:16, padding:"5px 14px", fontFamily:T.mono, fontSize:11, cursor:"pointer" }}>By Design</button>
-      </div>
-
-      {summaryTab==="customer" && (() => {
-        const byC={};
-        bookings.forEach(b=>{ if(!byC[b.customer]) byC[b.customer]={customer:b.customer,orders:[],total:0,advance:0}; byC[b.customer].orders.push(b); byC[b.customer].total+=b.lines?.length?b.lines.reduce((a,l)=>a+SIZES.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0):b.total; byC[b.customer].advance+=(+b.advanceAmount||0); });
-        return Object.values(byC).map(c=>(
-          <div key={c.customer} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10 }}>
-            <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.text, marginBottom:4 }}>{c.customer} <span style={{color:T.gold}}>· {c.total} pcs</span></div>
-            {c.advance>0 && <div style={{ fontFamily:T.mono, fontSize:11, color:T.green, marginBottom:6 }}>💰 Advance: Rs.{c.advance}</div>}
-            {c.orders.map(b=>(
-              <div key={b.id} style={{ background:T.surface, borderRadius:8, padding:10, marginBottom:6 }}>
-                <div style={{ fontFamily:T.mono, fontSize:12, color:T.gold, fontWeight:700 }}>{b.orderNo||b.externalRef} · {b.bookingDate}</div>
-                {(b.lines||[]).map((l,i)=>{
-                  const dl=l.hasDelivery?daysLeft(l.deliveryDate):null; const ac=alertColor(dl);
-                  const sz=SIZES.filter(s=>(+(l.sizes||{})[s]||0)>0).map(s=>`${s}${(l.sizes||{})[s]}`).join(" ");
-                  return <div key={i} style={{ fontFamily:T.mono, fontSize:11, color:T.text, marginTop:3 }}>📦 {l.designNo||"—"}{l.color?` · ${l.color}`:""} — {sz}{ac?<span style={{color:ac, marginLeft:8}}>{alertLabel(dl)}</span>:null}</div>;
-                })}
-              </div>
-            ))}
-          </div>
-        ));
-      })()}
-
-      {summaryTab==="design" && (() => {
-        const byD={};
-        bookings.forEach(b=>(b.lines||[]).forEach(l=>{ if(!l.designNo) return; if(!byD[l.designNo]) byD[l.designNo]={dn:l.designNo,lines:[],total:0}; byD[l.designNo].lines.push({...l,customer:b.customer,orderNo:b.orderNo||b.externalRef}); byD[l.designNo].total+=SIZES.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); }));
-        return Object.values(byD).map(d=>(
-          <div key={d.dn} style={{ background:T.card, borderRadius:10, padding:14, marginBottom:10 }}>
-            <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold, marginBottom:8 }}>Design {d.dn} <span style={{color:T.text}}>· {d.total} pcs</span></div>
-            {d.lines.map((l,i)=>{
-              const dl=l.hasDelivery?daysLeft(l.deliveryDate):null; const ac=alertColor(dl);
-              const sz=SIZES.filter(s=>(+(l.sizes||{})[s]||0)>0).map(s=>`${s}${(l.sizes||{})[s]}`).join(" ");
-              return <div key={i} style={{ background:T.surface, borderRadius:8, padding:10, marginBottom:6, fontFamily:T.mono, fontSize:12 }}>
-                <b style={{color:T.text}}>{l.customer}</b>{l.color?<span style={{color:T.steelLt}}> · {l.color}</span>:null} — {sz}{ac?<span style={{color:ac, marginLeft:8}}>{alertLabel(dl)}</span>:null}
-                <div style={{fontSize:10,color:T.steelLt}}>Order: {l.orderNo}</div>
-              </div>;
-            })}
-          </div>
-        ));
-      })()}
-    </div>
-  );
 }
-
 
 // ── Barcode Panel ─────────────────────────────────────────────────────────────
 function BarcodePanel({ design, jobbers, onUpdate }) {
@@ -6965,6 +7005,7 @@ ${vouchers}
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:T.sans }}>
+      <style>{`@media print{ .no-print{display:none !important} body{background:#fff} tr{page-break-inside:avoid} }`}</style>
       <div style={{ background:`linear-gradient(135deg, #F3EAFB 0%, #FBEAF3 100%)`, borderBottom:`2px solid ${T.accent}`, padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" }}>
         <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap" }}>
           <div style={{ marginRight:32, padding:"14px 0" }}>
