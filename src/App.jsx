@@ -2382,12 +2382,16 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
   }
 
   // ═══════════ SUMMARY / CUTTING ═══════════
-  // auto-mark completed when every line is Dispatched/Delivered/Cancelled
+  // auto-mark completed when every line is Dispatched/Delivered/Cancelled (guarded against loops)
+  const autoCompleteDone = useRef(new Set());
   useEffect(() => {
     bookings.forEach(b => {
-      if (b.completed) return;
+      if (b.completed || autoCompleteDone.current.has(b.id)) return;
       const lns = b.lines||[];
-      if (lns.length>0 && lns.every(l=>isDoneStatus(l.status))) toggleCompleted(b.id, true);
+      if (lns.length>0 && lns.every(l=>isDoneStatus(l.status))) {
+        autoCompleteDone.current.add(b.id);
+        toggleCompleted(b.id, true);
+      }
     });
   }, [bookings]);
 
