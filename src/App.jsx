@@ -2563,10 +2563,9 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
   function balance(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
 
   async function addLine(){
-    const s={ id:`SM${Date.now()}`, agent:header.agent, designNo:"", givenQty:0, receivedQty:0, remark:"", colourBreakup:[{colour:"",size:"",qty:""}], createdBy:currentUser };
+    const s={ id:`SM${Date.now()}`, agent:header.agent, designNo:"", givenQty:0, receivedQty:0, remark:"", colourBreakup:[], createdBy:currentUser };
     await dbUpsert("samples", sToRow(s));
     setRows(p=>[...p, s]);
-    setOpenId(s.id);
   }
   async function updRow(id, patch){
     const s=rows.find(x=>x.id===id); if(!s) return;
@@ -2577,7 +2576,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
   }
   async function delRow(id){ if(!window.confirm("Delete this line?")) return; await dbDelete("samples", id); setRows(p=>p.filter(x=>x.id!==id)); }
 
-  function addColour(id){ const s=rows.find(x=>x.id===id); updRow(id,{ colourBreakup:[...(s.colourBreakup||[]), {colour:"",size:"",qty:""}] }); }
+  function addColour(id){ const s=rows.find(x=>x.id===id); updRow(id,{ colourBreakup:[...(s.colourBreakup||[]), {colour:"",size:"",qty:""}] }); setOpenId(id); }
   function updColour(id, idx, k, v){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).map((c,i)=>i===idx?{...c,[k]:v}:c); updRow(id,{ colourBreakup:cb }); }
   function remColour(id, idx){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).filter((c,i)=>i!==idx); updRow(id,{ colourBreakup:cb }); }
 
@@ -2646,6 +2645,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
                           </div>
                         ))}
                         {open && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
+                        {!open && (s.colourBreakup||[]).length===0 && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
                       </div>
                     </td>
                     <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{s.givenQty||""}</td>
@@ -2662,7 +2662,10 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
             </tbody>
           </table>
         </div>
-        <div className="no-print" style={{ marginTop:14 }}><Btn label="+ Add Design Line" onClick={addLine} small /></div>
+        <div className="no-print" style={{ marginTop:14, display:"flex", gap:10, alignItems:"center" }}>
+          <Btn label="+ Add Design Line" onClick={addLine} small />
+          <Btn label="💾 Save" onClick={()=>showToast("Sab kuch already saved ✓")} color={T.green} small />
+        </div>
       </div>
     </div>
   );
