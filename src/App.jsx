@@ -1902,7 +1902,7 @@ function rowToB(r) {
     company:r.company||"", mobile:r.mobile||"", whatsapp:r.whatsapp||"", email:r.email||"", gstin:r.gstin||"",
     billingAddress:r.billing_address||"", shippingAddress:r.shipping_address||"", salesExec:r.sales_exec||"",
     transport:r.transport||"", destination:r.destination||"", paymentTerms:r.payment_terms||"",
-    status:r.status||"Pending", priority:r.priority||"Normal", specialInstructions:r.special_instructions||"" };
+    status:r.status||"Pending", priority:r.priority||"Normal", specialInstructions:r.special_instructions||"", hasDelivery:!!r.has_delivery };
 }
 function bToRow(b) {
   return { id:b.id, customer:b.customer||"", customer_id:b.customerId||"", design_no:b.designNo||"", color:b.color||"", sizes:b.sizes||{}, booking_date:b.bookingDate||"", delivery_date:b.deliveryDate||"", notes:b.notes||"", total:b.total||0, created_by:b.createdBy||"", created_at_str:b.createdAtStr||"",
@@ -1912,7 +1912,7 @@ function bToRow(b) {
     company:b.company||"", mobile:b.mobile||"", whatsapp:b.whatsapp||"", email:b.email||"", gstin:b.gstin||"",
     billing_address:b.billingAddress||"", shipping_address:b.shippingAddress||"", sales_exec:b.salesExec||"",
     transport:b.transport||"", destination:b.destination||"", payment_terms:b.paymentTerms||"",
-    status:b.status||"Pending", priority:b.priority||"Normal", special_instructions:b.specialInstructions||"" };
+    status:b.status||"Pending", priority:b.priority||"Normal", special_instructions:b.specialInstructions||"", has_delivery:!!b.hasDelivery };
 }
 
 // ── Bills + Payments converters ───────────────────────────────────────────────
@@ -2044,7 +2044,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
     const t=new Date(), p=`${String(t.getDate()).padStart(2,"0")}${String(t.getMonth()+1).padStart(2,"0")}${t.getFullYear()}`;
     return `${p}-${String(bookings.filter(b=>(b.orderNo||"").startsWith(p)).length+1).padStart(3,"0")}`;
   }
-  function blankLine(){ return { id:`L${Date.now()}${Math.random().toString(36).slice(2,5)}`, designNo:"", colour:"", mrp:"", remark:"", sizes:{}, deliveryDate:"", hasDelivery:false }; }
+  function blankLine(){ return { id:`L${Date.now()}${Math.random().toString(36).slice(2,5)}`, designNo:"", colour:"", mrp:"", remark:"", sizes:{}, deliveryDate:"", hasDelivery:false, status:"Pending" }; }
   function blankForm(){ return { orderType:"app", orderNo:nextOrderNo(), externalRef:"", agent:"", source:"", sourcePlace:"",
     customer:"", customerId:"", company:"", mobile:"", whatsapp:"", email:"", gstin:"", billingAddress:"", shippingAddress:"",
     salesExec:"", transport:"", destination:"", paymentTerms:"", status:"Pending", priority:"Normal",
@@ -2061,8 +2061,12 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
   function remLine(id){ setForm(f=>({...f, lines:f.lines.length>1?f.lines.filter(l=>l.id!==id):f.lines})); }
   function updLine(id,k,v){ setForm(f=>({...f, lines:f.lines.map(l=>l.id!==id?l:{...l,[k]:v})})); }
   function updSize(id,sz,v){ setForm(f=>({...f, lines:f.lines.map(l=>l.id!==id?l:{...l, sizes:{...l.sizes,[sz]:v}})})); }
-  function lineTotal(l){ return activeSizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); }
-  function orderTotal(lines){ return (lines||[]).reduce((a,l)=>a+activeSizes.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0); }
+  // colour field me comma se kai colours ho sakte hain (e.g. "1,2,3") — total un sab ka
+  function colourList(l){ return String(l.colour||"").split(",").map(c=>c.trim()).filter(Boolean); }
+  function colourCount(l){ const n=colourList(l).length; return n>0?n:1; }
+  function lineSizeSum(l){ return activeSizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); }
+  function lineTotal(l){ return lineSizeSum(l)*colourCount(l); }
+  function orderTotal(lines){ return (lines||[]).reduce((a,l)=>a+lineTotal(l),0); }
   // sort lines: design, then colour (numeric-aware)
   function sortedLines(lines){
     const key=v=>{ const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return isNaN(n)?Infinity:n; };
@@ -2161,18 +2165,36 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
             </div>
           )}
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:8 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:8, marginBottom:10 }}>
           <Inp label="Company" value={form.company} onChange={v=>setForm(f=>({...f,company:v}))} />
           <Inp label="Mobile" value={form.mobile} onChange={v=>setForm(f=>({...f,mobile:v}))} />
-          <Inp label="WhatsApp" value={form.whatsapp} onChange={v=>setForm(f=>({...f,whatsapp:v}))} />
           <Inp label="Email" value={form.email} onChange={v=>setForm(f=>({...f,email:v}))} />
-          <Inp label="GST No" value={form.gstin} onChange={v=>setForm(f=>({...f,gstin:v.toUpperCase()}))} />
           <Inp label="Sales Executive" value={form.salesExec} onChange={v=>setForm(f=>({...f,salesExec:v}))} />
-          <Inp label="Transport" value={form.transport} onChange={v=>setForm(f=>({...f,transport:v}))} />
-          <Inp label="Destination" value={form.destination} onChange={v=>setForm(f=>({...f,destination:v}))} />
-          <Inp label="Payment Terms" value={form.paymentTerms} onChange={v=>setForm(f=>({...f,paymentTerms:v}))} placeholder="e.g. 30 days" />
-          <Inp label="Billing Address" value={form.billingAddress} onChange={v=>setForm(f=>({...f,billingAddress:v}))} />
-          <Inp label="Shipping Address" value={form.shippingAddress} onChange={v=>setForm(f=>({...f,shippingAddress:v}))} />
+        </div>
+        <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer", marginBottom:8 }}>
+          <input type="checkbox" checked={!!form.diffWhatsapp} onChange={e=>setForm(f=>({...f,diffWhatsapp:e.target.checked}))} style={{ width:15, height:15, accentColor:T.gold }} />
+          WhatsApp number mobile se alag hai
+        </label>
+        {form.diffWhatsapp && <div style={{ marginBottom:10, maxWidth:200 }}><Inp label="WhatsApp Number" value={form.whatsapp} onChange={v=>setForm(f=>({...f,whatsapp:v}))} /></div>}
+
+        <div style={{ background:T.bg, borderRadius:8, padding:12, border:`1px solid ${T.border}`, marginBottom:10 }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>Billing</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:8 }}>
+            <div style={{ gridColumn:"1 / -1" }}><Inp label="Address" value={form.billingAddress} onChange={v=>setForm(f=>({...f,billingAddress:v}))} /></div>
+            <Inp label="GST" value={form.gstin} onChange={v=>setForm(f=>({...f,gstin:v.toUpperCase()}))} />
+            <Inp label="Transport" value={form.transport} onChange={v=>setForm(f=>({...f,transport:v}))} />
+            <Inp label="Destination" value={form.destination} onChange={v=>setForm(f=>({...f,destination:v}))} />
+            <Inp label="Payment Terms" value={form.paymentTerms} onChange={v=>setForm(f=>({...f,paymentTerms:v}))} placeholder="e.g. 30 days" />
+          </div>
+        </div>
+
+        <div style={{ background:T.bg, borderRadius:8, padding:12, border:`1px solid ${T.border}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>Shipping</div>
+          <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer", marginBottom:8 }}>
+            <input type="checkbox" checked={form.shipSameAsBilling!==false} onChange={e=>setForm(f=>({...f,shipSameAsBilling:e.target.checked, shippingAddress:e.target.checked?f.billingAddress:f.shippingAddress}))} style={{ width:15, height:15, accentColor:T.gold }} />
+            Same as billing address
+          </label>
+          {form.shipSameAsBilling===false && <Inp label="Shipping Address" value={form.shippingAddress} onChange={v=>setForm(f=>({...f,shippingAddress:v}))} />}
         </div>
         <div style={{ marginTop:10 }}><Btn label="💾 Save Customer" onClick={saveCustomer} color={T.surface} textColor={T.gold} small /></div>
       </div>
@@ -2216,7 +2238,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
             </tbody>
             <tfoot><tr style={{ background:T.surface }}>
               <td colSpan={5} style={{...td, textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt, paddingRight:10}}>TOTAL</td>
-              {activeSizes.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{form.lines.reduce((a,l)=>a+(+(l.sizes||{})[s]||0),0)||""}</td>)}
+              {activeSizes.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{form.lines.reduce((a,l)=>a+(+(l.sizes||{})[s]||0)*colourCount(l),0)||""}</td>)}
               <td style={{...td, fontFamily:T.mono, fontSize:14, fontWeight:900, color:T.gold}}>{orderTotal(form.lines)}</td>
               <td style={td}></td>
             </tr></tfoot>
@@ -2252,6 +2274,21 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
   );
 
   // ═══════════ ORDER DETAIL ═══════════
+  async function updLineStatus(bookingId, lineId, status){
+    const b=bookings.find(x=>x.id===bookingId); if(!b) return;
+    const nb={...b, lines:(b.lines||[]).map(l=>l.id===lineId?{...l,status}:l)};
+    setBookings(p=>p.map(x=>x.id===bookingId?nb:x));
+    await dbUpsert("bookings", bToRow(nb));
+  }
+  async function toggleCompleted(bookingId, val){
+    const b=bookings.find(x=>x.id===bookingId); if(!b) return;
+    const nb={...b, completed:val, lines: val ? (b.lines||[]).map(l=>({...l,status:"Delivered"})) : b.lines };
+    setBookings(p=>p.map(x=>x.id===bookingId?nb:x));
+    await dbUpsert("bookings", bToRow(nb));
+    if(val) showToast("Order marked completed ✓");
+  }
+  function isDoneStatus(st){ return st==="Dispatched"||st==="Delivered"||st==="Cancelled"; }
+
   if(view==="detail"){
     const b=bookings.find(x=>x.id===selId);
     if(!b) return <Btn label="← Back" onClick={()=>setView("list")} />;
@@ -2273,6 +2310,10 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
           <Btn label="⧉ Duplicate" onClick={()=>duplicateOrder(b)} color={T.surface} textColor={T.steelLt} small />
           <Btn label="🗑" onClick={()=>delOrder(b.id)} color={T.red+"22"} textColor={T.red} small />
         </div>
+        <label className="no-print" style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:12, color:T.text, cursor:"pointer", marginBottom:12 }}>
+          <input type="checkbox" checked={!!b.completed} onChange={e=>toggleCompleted(b.id,e.target.checked)} style={{ width:16, height:16, accentColor:T.green }} />
+          ✅ Mark whole order Completed (saari designs done)
+        </label>
 
         <div style={{ background:T.card, borderRadius:12, padding:18, border:`1px solid ${T.border}` }}>
           <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:14, paddingBottom:12, borderBottom:`1px solid ${T.border}` }}>
@@ -2301,6 +2342,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
               <thead><tr>
                 <th style={th}>Design</th>
                 <th style={th}>Colour</th>
+                <th style={th} className="no-print">Status</th>
                 {detailedPrint && <th style={th}>MRP</th>}
                 {detailedPrint && <th style={th}>Remark</th>}
                 {cols.map(s=><th key={s} style={th}>{s}</th>)}
@@ -2308,9 +2350,14 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
               </tr></thead>
               <tbody>
                 {lines.map((l,i)=>(
-                  <tr key={l.id||i} style={{ background: i%2?T.surface:T.bg }}>
+                  <tr key={l.id||i} style={{ background: i%2?T.surface:T.bg, opacity: isDoneStatus(l.status)?0.45:1 }}>
                     <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{l.designNo}</td>
                     <td style={{...td, fontFamily:T.mono, color:T.text}}>{l.colour}</td>
+                    <td style={td} className="no-print">
+                      <select value={l.status||"Pending"} onChange={e=>updLineStatus(b.id,l.id,e.target.value)} style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:11, padding:"4px 6px" }}>
+                        {STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
                     {detailedPrint && <td style={{...td, fontFamily:T.mono, color:T.text}}>{l.mrp?`₹${l.mrp}`:"—"}</td>}
                     {detailedPrint && <td style={{...td, fontSize:11, color:T.steelLt}}>{l.remark||"—"}</td>}
                     {cols.map(s=><td key={s} style={{...td, fontFamily:T.mono, color:T.text}}>{(l.sizes||{})[s]||""}</td>)}
@@ -2320,7 +2367,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
               </tbody>
               <tfoot><tr style={{ background:T.surface }}>
                 <td colSpan={detailedPrint?4:2} style={{...td, textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt, paddingRight:10}}>TOTAL</td>
-                {cols.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{lines.reduce((a,l)=>a+(+(l.sizes||{})[s]||0),0)||""}</td>)}
+                {cols.map(s=><td key={s} style={{...td, fontFamily:T.mono, fontSize:11, color:T.steelLt}}>{lines.reduce((a,l)=>a+(+(l.sizes||{})[s]||0)*colourCount(l),0)||""}</td>)}
                 <td style={{...td, fontFamily:T.mono, fontSize:14, fontWeight:900, color:T.gold}}>{orderTotal(lines)}</td>
               </tr></tfoot>
             </table>
@@ -2335,20 +2382,65 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
   }
 
   // ═══════════ SUMMARY / CUTTING ═══════════
+  // auto-mark completed when every line is Dispatched/Delivered/Cancelled
+  useEffect(() => {
+    bookings.forEach(b => {
+      if (b.completed) return;
+      const lns = b.lines||[];
+      if (lns.length>0 && lns.every(l=>isDoneStatus(l.status))) toggleCompleted(b.id, true);
+    });
+  }, [bookings]);
+
+  if(view==="completed"){
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }} className="no-print">
+          <Btn label="← Back to All Orders" onClick={()=>setView("list")} color={T.surface} textColor={T.steelLt} small />
+          <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold, alignSelf:"center" }}>Completed Orders</div>
+        </div>
+        {completedBookings.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>Koi completed order nahi hai.</div>}
+        {completedBookings.map(b=>(
+          <div key={b.id} style={{ background:T.card, borderRadius:10, padding:"12px 16px", marginBottom:10, border:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+            <div onClick={()=>{ setSelId(b.id); setView("detail"); }} style={{ cursor:"pointer", flex:1 }}>
+              <div style={{ fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:13 }}>{b.orderNo}</div>
+              <div style={{ fontWeight:700, color:T.text, fontSize:14 }}>{b.customer}</div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:2 }}>{orderTotal(b.lines)} pcs · ✅ Completed</div>
+            </div>
+            <div style={{ display:"flex", gap:6 }}>
+              <Btn label="↩ Reopen" onClick={()=>toggleCompleted(b.id,false)} color={T.surface} textColor={T.steelLt} small />
+              <Btn label="🗑 Delete" onClick={()=>delOrder(b.id)} color={T.red+"22"} textColor={T.red} small />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if(view==="samples") return <SamplesTab bookings={bookings} showToast={showToast} currentUser={currentUser} onBack={()=>setView("list")} />;
+
   if(view==="summary"){
     const allLines=[];
     bookings.forEach(b=>(b.lines||[]).forEach(l=>allLines.push({...l, customer:b.customer, orderNo:b.orderNo})));
     const cutLines=cutDesign.trim()?allLines.filter(l=>String(l.designNo).trim().toLowerCase()===cutDesign.trim().toLowerCase()):[];
     const byColour={};
-    cutLines.forEach(l=>{ const c=l.colour||"—"; if(!byColour[c]) byColour[c]={colour:c,sizes:{},total:0}; activeSizes.forEach(s=>{ byColour[c].sizes[s]=(byColour[c].sizes[s]||0)+(+(l.sizes||{})[s]||0); }); byColour[c].total+=activeSizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0); });
+    cutLines.forEach(l=>{
+      const cs=String(l.colour||"").split(",").map(x=>x.trim()).filter(Boolean);
+      (cs.length?cs:["—"]).forEach(c=>{
+        if(!byColour[c]) byColour[c]={colour:c,sizes:{},total:0};
+        activeSizes.forEach(s=>{ byColour[c].sizes[s]=(byColour[c].sizes[s]||0)+(+(l.sizes||{})[s]||0); });
+        byColour[c].total+=activeSizes.reduce((a,s)=>a+(+(l.sizes||{})[s]||0),0);
+      });
+    });
     const cutCols=activeSizes.filter(s=>Object.values(byColour).some(c=>c.sizes[s]>0));
 
     return (
       <div>
         <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }} className="no-print">
           <button onClick={()=>setView("list")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Orders</button>
+          <button onClick={()=>setView("completed")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Completed</button>
+          <button onClick={()=>setView("samples")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Samples</button>
           <button onClick={()=>setSummaryTab("customer")} style={{ background:summaryTab==="customer"?T.gold:T.surface, color:summaryTab==="customer"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>By Customer</button>
-          <button onClick={()=>setSummaryTab("cutting")} style={{ background:summaryTab==="cutting"?T.gold:T.surface, color:summaryTab==="cutting"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>✂️ Cutting Sheet</button>
+          <button onClick={()=>setSummaryTab("cutting")} style={{ background:summaryTab==="cutting"?T.gold:T.surface, color:summaryTab==="cutting"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Cutting Report</button>
         </div>
 
         {summaryTab==="cutting" && (
@@ -2386,7 +2478,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
                   <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:6 }}>Orders in this sheet</div>
                   {[...new Set(cutLines.map(l=>`${l.customer}||${l.orderNo}`))].map(k=>{
                     const [cust,ord]=k.split("||");
-                    const t=cutLines.filter(l=>l.customer===cust&&l.orderNo===ord).reduce((a,l)=>a+activeSizes.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0),0);
+                    const t=cutLines.filter(l=>l.customer===cust&&l.orderNo===ord).reduce((a,l)=>a+activeSizes.reduce((x,s)=>x+(+(l.sizes||{})[s]||0),0)*(String(l.colour||"").split(",").map(x=>x.trim()).filter(Boolean).length||1),0);
                     return <div key={k} style={{ fontFamily:T.mono, fontSize:11, color:T.text }}>· {cust} <span style={{color:T.steelLt}}>({ord})</span> — <b style={{color:T.gold}}>{t} pcs</b></div>;
                   })}
                 </div>
@@ -2416,13 +2508,17 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
 
   // ═══════════ LIST ═══════════
   const q=searchQ.trim().toLowerCase();
-  const filtered=q?bookings.filter(b=>(b.customer||"").toLowerCase().includes(q)||(b.orderNo||"").toLowerCase().includes(q)||(b.lines||[]).some(l=>String(l.designNo).toLowerCase().includes(q))):bookings;
+  const activeBookings = bookings.filter(b=>!b.completed);
+  const completedBookings = bookings.filter(b=>b.completed);
+  const filtered=q?activeBookings.filter(b=>(b.customer||"").toLowerCase().includes(q)||(b.orderNo||"").toLowerCase().includes(q)||(b.lines||[]).some(l=>String(l.designNo).toLowerCase().includes(q))):activeBookings;
   return (
     <div>
       <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
         <button onClick={()=>setView("list")} style={{ background:T.gold, color:"#fff", border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Orders</button>
+        <button onClick={()=>setView("completed")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Completed</button>
+        <button onClick={()=>setView("samples")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Samples</button>
         <button onClick={()=>{ setSummaryTab("customer"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Summary</button>
-        <button onClick={()=>{ setSummaryTab("cutting"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>✂️ Cutting</button>
+        <button onClick={()=>{ setSummaryTab("cutting"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Cutting</button>
         <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search customer / design / order…" style={{ flex:1, minWidth:170, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
         <Btn label="+ New Order" onClick={()=>{ setForm(blankForm()); setEditId(null); setView("new"); }} />
       </div>
@@ -2441,6 +2537,147 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Samples Tab (Booking ke andar) — agent-wise grouped sample tracking ───────
+function SamplesTab({ bookings, showToast, currentUser, onBack }) {
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [detailed, setDetailed] = useState(false);
+  const [openId, setOpenId] = useState(null);
+  const [nw, setNw] = useState({ agent:"", designNo:"", givenQty:"", remark:"" });
+
+  useEffect(() => { load(); }, []);
+  async function load() {
+    try { const r = await dbSelect("samples"); setRows((r||[]).map(rowToS)); } catch(e) {}
+  }
+  function rowToS(r){ return { id:r.id, agent:r.agent||"", designNo:r.design_no||"", givenQty:r.given_qty||0, receivedQty:r.received_qty||0, remark:r.remark||"", colourBreakup:r.colour_breakup||[], completed:!!r.completed, createdBy:r.created_by||"" }; }
+  function sToRow(s){ return { id:s.id, agent:s.agent||"", design_no:s.designNo||"", given_qty:+s.givenQty||0, received_qty:+s.receivedQty||0, remark:s.remark||"", colour_breakup:s.colourBreakup||[], completed:!!s.completed, created_by:s.createdBy||currentUser }; }
+
+  async function addSample() {
+    if(!nw.agent.trim()||!nw.designNo.trim()){ showToast("Agent aur Design zaroori hai","error"); return; }
+    const s={ id:`SM${Date.now()}`, agent:nw.agent.trim(), designNo:nw.designNo.trim(), givenQty:+nw.givenQty||0, receivedQty:0, remark:nw.remark||"", colourBreakup:[], completed:false, createdBy:currentUser };
+    await dbUpsert("samples", sToRow(s));
+    setRows(p=>[s,...p]); setNw({ agent:"", designNo:"", givenQty:"", remark:"" }); setShowNew(false); showToast("Sample added ✓");
+  }
+  async function updSample(id, patch) {
+    const s=rows.find(x=>x.id===id); if(!s) return;
+    const ns={...s,...patch};
+    await dbUpsert("samples", sToRow(ns));
+    setRows(p=>p.map(x=>x.id===id?ns:x));
+  }
+  async function delSample(id) {
+    if(!window.confirm("Delete this sample entry?")) return;
+    await dbDelete("samples", id); setRows(p=>p.filter(x=>x.id!==id));
+  }
+  function leftQty(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
+
+  function addColourRow(id){ const s=rows.find(x=>x.id===id); updSample(id,{ colourBreakup:[...(s.colourBreakup||[]), { colour:"", size:"", qty:"" }] }); }
+  function updColourRow(id, idx, k, v){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).map((c,i)=>i===idx?{...c,[k]:v}:c); updSample(id,{ colourBreakup:cb }); }
+  function remColourRow(id, idx){ const s=rows.find(x=>x.id===id); updSample(id,{ colourBreakup:(s.colourBreakup||[]).filter((c,i)=>i!==idx) }); }
+
+  const qq=q.trim().toLowerCase();
+  const filtered = qq ? rows.filter(s=>(s.agent||"").toLowerCase().includes(qq)) : rows;
+  const byAgent={};
+  filtered.forEach(s=>{ const k=s.agent||"—"; if(!byAgent[k]) byAgent[k]=[]; byAgent[k].push(s); });
+
+  const th={ padding:"7px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", border:`1px solid ${T.border}`, background:T.surface, textAlign:"center" };
+  const td={ padding:"6px 8px", border:`1px solid ${T.border}`, textAlign:"center" };
+  const txtIn={ background:T.bg, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box", outline:"none" };
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }} className="no-print">
+        <Btn label="← Back to Orders" onClick={onBack} color={T.surface} textColor={T.steelLt} small />
+        <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold }}>Samples</div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search agent/distributor…" style={{ flex:1, minWidth:170, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
+        <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer" }}>
+          <input type="checkbox" checked={detailed} onChange={e=>setDetailed(e.target.checked)} style={{ width:15,height:15,accentColor:T.gold }} />
+          Detailed
+        </label>
+        <Btn label="🖨 Print / PDF" onClick={()=>window.print()} color={T.surface} textColor={T.steelLt} small />
+        <Btn label="+ New Sample" onClick={()=>setShowNew(v=>!v)} />
+      </div>
+
+      {showNew && (
+        <div className="no-print" style={{ background:T.card, borderRadius:10, padding:14, marginBottom:16, border:`1px solid ${T.gold}` }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:8, marginBottom:10 }}>
+            <Inp label="Agent / Distributor *" value={nw.agent} onChange={v=>setNw(f=>({...f,agent:v}))} />
+            <Inp label="Design No *" value={nw.designNo} onChange={v=>setNw(f=>({...f,designNo:v}))} />
+            <Inp label="Qty Given" type="number" value={nw.givenQty} onChange={v=>setNw(f=>({...f,givenQty:v}))} />
+            <Inp label="Remark" value={nw.remark} onChange={v=>setNw(f=>({...f,remark:v}))} />
+          </div>
+          <Btn label="Save Sample" onClick={addSample} small />
+        </div>
+      )}
+
+      {Object.keys(byAgent).length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>Koi sample entry nahi hai.</div>}
+
+      {Object.entries(byAgent).map(([agent,list]) => (
+        <div key={agent} style={{ marginBottom:20 }}>
+          <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold, marginBottom:8, borderBottom:`2px solid ${T.gold}`, paddingBottom:4 }}>{agent}</div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ borderCollapse:"collapse", width:"100%", minWidth:520 }}>
+              <thead><tr>
+                <th style={th}>Sr</th>
+                <th style={th}>Design</th>
+                <th style={th}>Qty Given</th>
+                <th style={th}>Qty Rcvd</th>
+                <th style={th}>Remark</th>
+                <th style={th} className="no-print">Left</th>
+                <th style={th} className="no-print"></th>
+              </tr></thead>
+              <tbody>
+                {list.map((s,i) => {
+                  const left=leftQty(s); const open = detailed || openId===s.id;
+                  return (
+                    <Fragment key={s.id}>
+                      <tr style={{ background: s.completed && left===0 ? T.green+"14" : (i%2?T.surface:T.bg) }}>
+                        <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}</td>
+                        <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>
+                          {s.designNo}
+                          <span onClick={()=>setOpenId(openId===s.id?null:s.id)} className="no-print" style={{ marginLeft:6, cursor:"pointer", color:T.steelLt, fontSize:11 }}>{openId===s.id?"[−]":"[+]"}</span>
+                          {open && (
+                            <div style={{ marginTop:6, background:T.bg, borderRadius:6, padding:6, border:`1px solid ${T.border}` }}>
+                              {(s.colourBreakup||[]).map((c,ci) => (
+                                <div key={ci} style={{ display:"flex", gap:4, marginBottom:4, alignItems:"center" }}>
+                                  <input value={c.colour} onChange={e=>updColourRow(s.id,ci,"colour",e.target.value)} placeholder="colour" style={{...txtIn, width:70, fontSize:11}} className="no-print" />
+                                  <input value={c.size} onChange={e=>updColourRow(s.id,ci,"size",e.target.value)} placeholder="size" style={{...txtIn, width:60, fontSize:11}} className="no-print" />
+                                  <input type="number" value={c.qty} onChange={e=>updColourRow(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:50, fontSize:11}} className="no-print" />
+                                  <span onClick={()=>remColourRow(s.id,ci)} className="no-print" style={{ color:T.red, cursor:"pointer", fontSize:12 }}>✕</span>
+                                  <span style={{ display:"none" }} className="print-only" />
+                                  <span style={{ fontSize:11, color:T.text }}>{c.colour} {c.size?`- ${c.size}`:""} : {c.qty}</span>
+                                </div>
+                              ))}
+                              <span onClick={()=>addColourRow(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>
+                            </div>
+                          )}
+                        </td>
+                        <td style={{...td, fontFamily:T.mono}}>{s.givenQty}</td>
+                        <td style={td} className="no-print"><input type="number" value={s.receivedQty} onChange={e=>updSample(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:60}} /></td>
+                        <td style={{...td, display:"none"}} className="print-only">{s.receivedQty}</td>
+                        <td style={td} className="no-print"><input value={s.remark} onChange={e=>updSample(s.id,{remark:e.target.value})} style={txtIn} /></td>
+                        <td style={{...td, display:"none"}} className="print-only">{s.remark||"—"}</td>
+                        <td style={{...td, fontFamily:T.mono, fontWeight:700, color: left>0?T.red:T.green}} className="no-print">{left} {left>0?"⚠️":"✓"}</td>
+                        <td style={td} className="no-print">
+                          <label style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer" }}>
+                            <input type="checkbox" checked={!!s.completed} onChange={e=>updSample(s.id,{completed:e.target.checked})} style={{ width:14,height:14,accentColor:T.green }} />
+                            <span onClick={()=>delSample(s.id)} style={{ color:T.red, cursor:"pointer", marginLeft:4 }}>🗑</span>
+                          </label>
+                        </td>
+                      </tr>
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+      <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:6 }}>Left = Given − Received. Colour/size breakdown design ke andar "+" se khulta hai — print me hamesha khula dikhta hai.</div>
     </div>
   );
 }
@@ -7005,7 +7242,7 @@ ${vouchers}
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:T.sans }}>
-      <style>{`@media print{ .no-print{display:none !important} body{background:#fff} tr{page-break-inside:avoid} }`}</style>
+      <style>{`@media print{ .no-print{display:none !important} .print-only{display:inline !important} body{background:#fff} tr{page-break-inside:avoid} }`}</style>
       <div style={{ background:`linear-gradient(135deg, #F3EAFB 0%, #FBEAF3 100%)`, borderBottom:`2px solid ${T.accent}`, padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" }}>
         <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap" }}>
           <div style={{ marginRight:32, padding:"14px 0" }}>
