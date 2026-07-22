@@ -36,9 +36,18 @@ const HDR = { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Conten
 async function dbSelect(table) {
   try {
     const r = await fetch(`${SUPA_URL}/rest/v1/${table}?select=*`, { headers: HDR });
-    if (!r.ok) return [];
+    if (!r.ok) {
+      let msg = ""; try { msg = await r.text(); } catch(e) {}
+      console.error(`LOAD FAILED [${table}] ${r.status}:`, msg);
+      if (typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Load failed (${table}): ${r.status} ${msg.slice(0,180)}`);
+      return [];
+    }
     return r.json();
-  } catch(e) { return []; }
+  } catch(e) {
+    console.error(`LOAD ERROR [${table}]:`, e);
+    if (typeof window !== "undefined" && window.__erpSaveError) window.__erpSaveError(`Load error (${table}): ${e?.message||e}`);
+    return [];
+  }
 }
 async function dbUpsert(table, data, silent) {
   try {
@@ -2420,8 +2429,6 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
     );
   }
 
-  if(view==="samples") return <SamplesTab bookings={bookings} showToast={showToast} currentUser={currentUser} onBack={()=>setView("list")} />;
-
   if(view==="summary"){
     const allLines=[];
     bookings.forEach(b=>(b.lines||[]).forEach(l=>allLines.push({...l, customer:b.customer, orderNo:b.orderNo})));
@@ -2442,7 +2449,6 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
         <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }} className="no-print">
           <button onClick={()=>setView("list")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Orders</button>
           <button onClick={()=>setView("completed")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Completed</button>
-          <button onClick={()=>setView("samples")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Samples</button>
           <button onClick={()=>setSummaryTab("customer")} style={{ background:summaryTab==="customer"?T.gold:T.surface, color:summaryTab==="customer"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>By Customer</button>
           <button onClick={()=>setSummaryTab("cutting")} style={{ background:summaryTab==="cutting"?T.gold:T.surface, color:summaryTab==="cutting"?"#fff":T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Cutting Report</button>
         </div>
@@ -2520,7 +2526,6 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
       <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
         <button onClick={()=>setView("list")} style={{ background:T.gold, color:"#fff", border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>All Orders</button>
         <button onClick={()=>setView("completed")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Completed</button>
-        <button onClick={()=>setView("samples")} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Samples</button>
         <button onClick={()=>{ setSummaryTab("customer"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Summary</button>
         <button onClick={()=>{ setSummaryTab("cutting"); setView("summary"); }} style={{ background:T.surface, color:T.steelLt, border:"none", borderRadius:20, padding:"6px 16px", fontFamily:T.mono, fontSize:11, fontWeight:700, cursor:"pointer" }}>Cutting</button>
         <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search customer / design / order…" style={{ flex:1, minWidth:170, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
@@ -2547,7 +2552,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
 
 // ── Samples Tab (Booking ke andar) — agent-wise grouped sample tracking ───────
 // ── Samples Tab — bilkul kaagaz jaisa: Agent/Distributor + Date header, ek table ──
-function SamplesTab({ bookings, showToast, currentUser, onBack }) {
+function SamplesTab({ showToast, currentUser, onBack }) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [savedId, setSavedId] = useState(null);
@@ -2555,7 +2560,8 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
 
   useEffect(() => { load(); }, []);
   async function load() {
-    try { const r = await dbSelect("samples"); setRows((r||[]).map(rowToS)); } catch(e) {}
+    const r = await dbSelect("samples");
+    setRows((r||[]).map(rowToS));
   }
   function rowToS(r){ return { id:r.id, agent:r.agent||"", designNo:r.design_no||"", givenQty:r.given_qty||0, receivedQty:r.received_qty||0, remark:r.remark||"", colourBreakup:r.colour_breakup||[], createdBy:r.created_by||"" }; }
   function sToRow(s){ return { id:s.id, agent:s.agent||"", design_no:s.designNo||"", given_qty:+s.givenQty||0, received_qty:+s.receivedQty||0, remark:s.remark||"", colour_breakup:s.colourBreakup||[], created_by:s.createdBy||currentUser }; }
@@ -2583,8 +2589,57 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
   function updColour(id, idx, k, v){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).map((c,i)=>i===idx?{...c,[k]:v}:c); updRow(id,{ colourBreakup:cb }); }
   function remColour(id, idx){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).filter((c,i)=>i!==idx); updRow(id,{ colourBreakup:cb }); }
 
-  // rows for the currently open sheet (matching this agent+date header, or all if header blank)
-  const sheetRows = rows.filter(s => (!header.agent || s.agent===header.agent));
+  // list of distinct agents that already have samples
+  const agentList = [...new Set(rows.map(r=>r.agent).filter(Boolean))].sort();
+  const [activeAgent, setActiveAgent] = useState(null);
+  const [newAgentName, setNewAgentName] = useState("");
+
+  async function openAgent(name){
+    if(!name.trim()) return;
+    setHeader(h=>({...h, agent:name.trim()}));
+    setActiveAgent(name.trim());
+    setNewAgentName("");
+  }
+
+  // ── AGENT PICKER (list of agents, or start a new one) ──
+  if (!activeAgent) {
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center" }} className="no-print">
+          {onBack && <Btn label="← Back" onClick={onBack} color={T.surface} textColor={T.steelLt} small />}
+          <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold }}>Samples — by Agent/Distributor</div>
+        </div>
+
+        <div style={{ background:T.card, borderRadius:12, padding:16, marginBottom:16, border:`1px solid ${T.gold}` }}>
+          <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Naya Agent / Distributor</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input value={newAgentName} onChange={e=>setNewAgentName(e.target.value)} placeholder="Naam type karo…" style={{ flex:1, background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontFamily:T.mono, fontSize:14, padding:"8px 12px", outline:"none" }} onKeyDown={e=>{ if(e.key==="Enter") openAgent(newAgentName); }} />
+            <Btn label="Open" onClick={()=>openAgent(newAgentName)} small />
+          </div>
+        </div>
+
+        {agentList.length>0 && (
+          <div>
+            <div style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", marginBottom:8 }}>Existing Records</div>
+            {agentList.map(a => {
+              const arows = rows.filter(r=>r.agent===a);
+              const totBal = arows.reduce((sum,r)=>sum+balance(r),0);
+              return (
+                <div key={a} onClick={()=>openAgent(a)} style={{ background:T.card, borderRadius:10, padding:"12px 16px", marginBottom:8, border:`1px solid ${T.border}`, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ fontWeight:700, color:T.text, fontFamily:T.mono }}>{a}</div>
+                  <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt }}>{arows.length} design line{arows.length!==1?"s":""}{totBal>0 ? <span style={{color:T.red, fontWeight:700}}> · {totBal} balance pending</span> : <span style={{color:T.green}}> · all clear ✓</span>}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {agentList.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:20, fontFamily:T.mono, fontSize:12 }}>Koi agent record nahi hai abhi.</div>}
+      </div>
+    );
+  }
+
+  // rows for the currently open agent only
+  const sheetRows = rows.filter(s => s.agent===activeAgent);
 
   const th={ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", border:`1px solid ${T.border}`, background:T.surface, textAlign:"center" };
   const td={ padding:"7px 10px", border:`1px solid ${T.border}`, textAlign:"center", verticalAlign:"top" };
@@ -2592,8 +2647,8 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
 
   return (
     <div>
-      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }} className="no-print">
-        <Btn label="← Back to Orders" onClick={onBack} color={T.surface} textColor={T.steelLt} small />
+      <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center" }} className="no-print">
+        <Btn label="← All Agents" onClick={()=>setActiveAgent(null)} color={T.surface} textColor={T.steelLt} small />
         <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold }}>Samples</div>
         <Btn label="🖨 Print / PDF" onClick={()=>window.print()} color={T.surface} textColor={T.steelLt} small />
       </div>
@@ -2602,7 +2657,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
         <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:16, paddingBottom:12, borderBottom:`2px solid ${T.gold}` }}>
           <div style={{ flex:1, minWidth:200 }}>
             <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Agent / Distributor</label>
-            <input value={header.agent} onChange={e=>setHeader(h=>({...h,agent:e.target.value}))} placeholder="naam type karo…" style={{ ...txtIn, display:"block", width:"100%", fontSize:16, fontWeight:700, marginTop:4, boxSizing:"border-box" }} />
+            <div style={{ fontFamily:T.mono, fontSize:18, fontWeight:900, color:T.text, marginTop:4 }}>{activeAgent}</div>
           </div>
           <div>
             <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Date</label>
@@ -6858,7 +6913,7 @@ function Workspace({ role, currentUser, designs, setDesigns, people, setPeople, 
     return j;
   }
 
-  const TABS = isAdmin ? ["Home","Designs","Bookings","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Fabric Stock","Barcode","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
+  const TABS = isAdmin ? ["Home","Designs","Bookings","Samples","Challans","People","Bills & Ledger","Fabric Purchases","Fabric Suppliers","Fabric Stock","Barcode","Activity Log","Search"] : ["Home","Designs","Bookings","Challans","Search"];
 
   function exportBackup() {
     const backup = {
@@ -7404,6 +7459,7 @@ ${vouchers}
           </div>
         )}
         {tab==="Bookings" && <Section title="Bookings — Order Planning" action={<PdfBtn targetId="rpt-bookings" title="Bookings" />}><div id="rpt-bookings"><BookingsPanel bookings={bookings} setBookings={setBookings} designs={designs} showToast={showToast} currentUser={currentUser} /></div></Section>}
+        {tab==="Samples" && isAdmin && <Section title="Samples — Agent / Distributor wise tracking" action={<PdfBtn targetId="rpt-samples" title="Samples" />}><div id="rpt-samples"><SamplesTab showToast={showToast} currentUser={currentUser} /></div></Section>}
         {tab==="People" && isAdmin && <PeopleManager people={people} setPeople={setPeople} designs={designs} showToast={showToast} currentUser={currentUser} />}
         {tab==="Challans" && <Section title="Challans" action={<PdfBtn targetId="rpt-challans" title="Challans" />}><div id="rpt-challans"><ChallansPanel jobbers={people} designs={designs} setDesigns={setDesigns} challans={challans} setChallans={setChallans} bills={bills} showToast={showToast} currentUser={currentUser} role={role} /></div></Section>}
         {tab==="Bills & Ledger" && isAdmin && <Section title="Jobber Bills & Payment Ledger"><BillsLedger jobbers={people} designs={designs} bills={bills} setBills={setBills} payments={payments} setPayments={setPayments} challans={challans} setChallans={setChallans} creditNotes={creditNotes} setCreditNotes={setCreditNotes} showToast={showToast} currentUser={currentUser} /></Section>}
