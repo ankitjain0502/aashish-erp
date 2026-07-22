@@ -2546,147 +2546,128 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
 }
 
 // ── Samples Tab (Booking ke andar) — agent-wise grouped sample tracking ───────
+// ── Samples Tab — bilkul kaagaz jaisa: Agent/Distributor + Date header, ek table ──
 function SamplesTab({ bookings, showToast, currentUser, onBack }) {
   const [rows, setRows] = useState([]);
-  const [q, setQ] = useState("");
-  const [showNew, setShowNew] = useState(false);
-  const [detailed, setDetailed] = useState(false);
   const [openId, setOpenId] = useState(null);
-  const [nw, setNw] = useState({ agent:"", designNo:"", givenQty:"", remark:"" });
+  const [header, setHeader] = useState({ agent:"", date:new Date().toISOString().slice(0,10) });
 
   useEffect(() => { load(); }, []);
   async function load() {
     try { const r = await dbSelect("samples"); setRows((r||[]).map(rowToS)); } catch(e) {}
   }
-  function rowToS(r){ return { id:r.id, agent:r.agent||"", designNo:r.design_no||"", givenQty:r.given_qty||0, receivedQty:r.received_qty||0, remark:r.remark||"", colourBreakup:r.colour_breakup||[], completed:!!r.completed, createdBy:r.created_by||"" }; }
-  function sToRow(s){ return { id:s.id, agent:s.agent||"", design_no:s.designNo||"", given_qty:+s.givenQty||0, received_qty:+s.receivedQty||0, remark:s.remark||"", colour_breakup:s.colourBreakup||[], completed:!!s.completed, created_by:s.createdBy||currentUser }; }
+  function rowToS(r){ return { id:r.id, agent:r.agent||"", designNo:r.design_no||"", givenQty:r.given_qty||0, receivedQty:r.received_qty||0, remark:r.remark||"", colourBreakup:r.colour_breakup||[], createdBy:r.created_by||"" }; }
+  function sToRow(s){ return { id:s.id, agent:s.agent||"", design_no:s.designNo||"", given_qty:+s.givenQty||0, received_qty:+s.receivedQty||0, remark:s.remark||"", colour_breakup:s.colourBreakup||[], created_by:s.createdBy||currentUser }; }
 
-  async function addSample() {
-    if(!nw.agent.trim()||!nw.designNo.trim()){ showToast("Agent aur Design zaroori hai","error"); return; }
-    const s={ id:`SM${Date.now()}`, agent:nw.agent.trim(), designNo:nw.designNo.trim(), givenQty:+nw.givenQty||0, receivedQty:0, remark:nw.remark||"", colourBreakup:[], completed:false, createdBy:currentUser };
+  function colourTotal(cb){ return (cb||[]).reduce((a,c)=>a+(+c.qty||0),0); }
+  function balance(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
+
+  async function addLine(){
+    const s={ id:`SM${Date.now()}`, agent:header.agent, designNo:"", givenQty:0, receivedQty:0, remark:"", colourBreakup:[{colour:"",size:"",qty:""}], createdBy:currentUser };
     await dbUpsert("samples", sToRow(s));
-    setRows(p=>[s,...p]); setNw({ agent:"", designNo:"", givenQty:"", remark:"" }); setShowNew(false); showToast("Sample added ✓");
+    setRows(p=>[...p, s]);
+    setOpenId(s.id);
   }
-  async function updSample(id, patch) {
+  async function updRow(id, patch){
     const s=rows.find(x=>x.id===id); if(!s) return;
     const ns={...s,...patch};
+    if(patch.colourBreakup) ns.givenQty = colourTotal(patch.colourBreakup);
     await dbUpsert("samples", sToRow(ns));
     setRows(p=>p.map(x=>x.id===id?ns:x));
   }
-  async function delSample(id) {
-    if(!window.confirm("Delete this sample entry?")) return;
-    await dbDelete("samples", id); setRows(p=>p.filter(x=>x.id!==id));
-  }
-  function leftQty(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
+  async function delRow(id){ if(!window.confirm("Delete this line?")) return; await dbDelete("samples", id); setRows(p=>p.filter(x=>x.id!==id)); }
 
-  function addColourRow(id){ const s=rows.find(x=>x.id===id); updSample(id,{ colourBreakup:[...(s.colourBreakup||[]), { colour:"", size:"", qty:"" }] }); }
-  function updColourRow(id, idx, k, v){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).map((c,i)=>i===idx?{...c,[k]:v}:c); updSample(id,{ colourBreakup:cb }); }
-  function remColourRow(id, idx){ const s=rows.find(x=>x.id===id); updSample(id,{ colourBreakup:(s.colourBreakup||[]).filter((c,i)=>i!==idx) }); }
+  function addColour(id){ const s=rows.find(x=>x.id===id); updRow(id,{ colourBreakup:[...(s.colourBreakup||[]), {colour:"",size:"",qty:""}] }); }
+  function updColour(id, idx, k, v){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).map((c,i)=>i===idx?{...c,[k]:v}:c); updRow(id,{ colourBreakup:cb }); }
+  function remColour(id, idx){ const s=rows.find(x=>x.id===id); const cb=(s.colourBreakup||[]).filter((c,i)=>i!==idx); updRow(id,{ colourBreakup:cb }); }
 
-  const qq=q.trim().toLowerCase();
-  const filtered = qq ? rows.filter(s=>(s.agent||"").toLowerCase().includes(qq)) : rows;
-  const byAgent={};
-  filtered.forEach(s=>{ const k=s.agent||"—"; if(!byAgent[k]) byAgent[k]=[]; byAgent[k].push(s); });
+  // rows for the currently open sheet (matching this agent+date header, or all if header blank)
+  const sheetRows = rows.filter(s => (!header.agent || s.agent===header.agent));
 
-  const th={ padding:"7px 8px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", border:`1px solid ${T.border}`, background:T.surface, textAlign:"center" };
-  const td={ padding:"6px 8px", border:`1px solid ${T.border}`, textAlign:"center" };
-  const txtIn={ background:T.bg, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", width:"100%", boxSizing:"border-box", outline:"none" };
+  const th={ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", border:`1px solid ${T.border}`, background:T.surface, textAlign:"center" };
+  const td={ padding:"7px 10px", border:`1px solid ${T.border}`, textAlign:"center", verticalAlign:"top" };
+  const txtIn={ background:T.bg, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"5px 7px", outline:"none" };
 
   return (
     <div>
       <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }} className="no-print">
         <Btn label="← Back to Orders" onClick={onBack} color={T.surface} textColor={T.steelLt} small />
         <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold }}>Samples</div>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search agent/distributor…" style={{ flex:1, minWidth:170, background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, color:T.text, fontFamily:T.mono, fontSize:13, padding:"8px 12px", outline:"none" }} />
-        <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.mono, fontSize:11, color:T.text, cursor:"pointer" }}>
-          <input type="checkbox" checked={detailed} onChange={e=>setDetailed(e.target.checked)} style={{ width:15,height:15,accentColor:T.gold }} />
-          Detailed
-        </label>
         <Btn label="🖨 Print / PDF" onClick={()=>window.print()} color={T.surface} textColor={T.steelLt} small />
-        <Btn label="+ New Sample" onClick={()=>setShowNew(v=>!v)} />
       </div>
 
-      {showNew && (
-        <div className="no-print" style={{ background:T.card, borderRadius:10, padding:14, marginBottom:16, border:`1px solid ${T.gold}` }}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:8, marginBottom:10 }}>
-            <Inp label="Agent / Distributor *" value={nw.agent} onChange={v=>setNw(f=>({...f,agent:v}))} />
-            <Inp label="Design No *" value={nw.designNo} onChange={v=>setNw(f=>({...f,designNo:v}))} />
-            <Inp label="Qty Given" type="number" value={nw.givenQty} onChange={v=>setNw(f=>({...f,givenQty:v}))} />
-            <Inp label="Remark" value={nw.remark} onChange={v=>setNw(f=>({...f,remark:v}))} />
+      <div style={{ background:T.card, borderRadius:12, padding:18, border:`1px solid ${T.border}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:16, paddingBottom:12, borderBottom:`2px solid ${T.gold}` }}>
+          <div style={{ flex:1, minWidth:200 }}>
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Agent / Distributor</label>
+            <input value={header.agent} onChange={e=>setHeader(h=>({...h,agent:e.target.value}))} placeholder="naam type karo…" style={{ ...txtIn, display:"block", width:"100%", fontSize:16, fontWeight:700, marginTop:4, boxSizing:"border-box" }} />
           </div>
-          <Btn label="Save Sample" onClick={addSample} small />
-        </div>
-      )}
-
-      {Object.keys(byAgent).length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:40, fontFamily:T.mono }}>Koi sample entry nahi hai.</div>}
-
-      {Object.entries(byAgent).map(([agent,list]) => (
-        <div key={agent} style={{ marginBottom:20 }}>
-          <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold, marginBottom:8, borderBottom:`2px solid ${T.gold}`, paddingBottom:4 }}>{agent}</div>
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ borderCollapse:"collapse", width:"100%", minWidth:520 }}>
-              <thead><tr>
-                <th style={th}>Sr</th>
-                <th style={th}>Design</th>
-                <th style={th}>Qty Given</th>
-                <th style={th}>Qty Rcvd</th>
-                <th style={th}>Remark</th>
-                <th style={th} className="no-print">Left</th>
-                <th style={th} className="no-print"></th>
-              </tr></thead>
-              <tbody>
-                {list.map((s,i) => {
-                  const left=leftQty(s); const open = detailed || openId===s.id;
-                  return (
-                    <Fragment key={s.id}>
-                      <tr style={{ background: s.completed && left===0 ? T.green+"14" : (i%2?T.surface:T.bg) }}>
-                        <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}</td>
-                        <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>
-                          {s.designNo}
-                          <span onClick={()=>setOpenId(openId===s.id?null:s.id)} className="no-print" style={{ marginLeft:6, cursor:"pointer", color:T.steelLt, fontSize:11 }}>{openId===s.id?"[−]":"[+]"}</span>
-                          {open && (
-                            <div style={{ marginTop:6, background:T.bg, borderRadius:6, padding:6, border:`1px solid ${T.border}` }}>
-                              {(s.colourBreakup||[]).map((c,ci) => (
-                                <div key={ci} style={{ display:"flex", gap:4, marginBottom:4, alignItems:"center" }}>
-                                  <input value={c.colour} onChange={e=>updColourRow(s.id,ci,"colour",e.target.value)} placeholder="colour" style={{...txtIn, width:70, fontSize:11}} className="no-print" />
-                                  <input value={c.size} onChange={e=>updColourRow(s.id,ci,"size",e.target.value)} placeholder="size" style={{...txtIn, width:60, fontSize:11}} className="no-print" />
-                                  <input type="number" value={c.qty} onChange={e=>updColourRow(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:50, fontSize:11}} className="no-print" />
-                                  <span onClick={()=>remColourRow(s.id,ci)} className="no-print" style={{ color:T.red, cursor:"pointer", fontSize:12 }}>✕</span>
-                                  <span style={{ display:"none" }} className="print-only" />
-                                  <span style={{ fontSize:11, color:T.text }}>{c.colour} {c.size?`- ${c.size}`:""} : {c.qty}</span>
-                                </div>
-                              ))}
-                              <span onClick={()=>addColourRow(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>
-                            </div>
-                          )}
-                        </td>
-                        <td style={{...td, fontFamily:T.mono}}>{s.givenQty}</td>
-                        <td style={td} className="no-print"><input type="number" value={s.receivedQty} onChange={e=>updSample(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:60}} /></td>
-                        <td style={{...td, display:"none"}} className="print-only">{s.receivedQty}</td>
-                        <td style={td} className="no-print"><input value={s.remark} onChange={e=>updSample(s.id,{remark:e.target.value})} style={txtIn} /></td>
-                        <td style={{...td, display:"none"}} className="print-only">{s.remark||"—"}</td>
-                        <td style={{...td, fontFamily:T.mono, fontWeight:700, color: left>0?T.red:T.green}} className="no-print">{left} {left>0?"⚠️":"✓"}</td>
-                        <td style={td} className="no-print">
-                          <label style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer" }}>
-                            <input type="checkbox" checked={!!s.completed} onChange={e=>updSample(s.id,{completed:e.target.checked})} style={{ width:14,height:14,accentColor:T.green }} />
-                            <span onClick={()=>delSample(s.id)} style={{ color:T.red, cursor:"pointer", marginLeft:4 }}>🗑</span>
-                          </label>
-                        </td>
-                      </tr>
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div>
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Date</label>
+            <input type="date" value={header.date} onChange={e=>setHeader(h=>({...h,date:e.target.value}))} style={{ ...txtIn, display:"block", marginTop:4 }} />
           </div>
         </div>
-      ))}
-      <div style={{ fontFamily:T.mono, fontSize:9, color:T.textDim, marginTop:6 }}>Left = Given − Received. Colour/size breakdown design ke andar "+" se khulta hai — print me hamesha khula dikhta hai.</div>
+
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ borderCollapse:"collapse", width:"100%", minWidth:640 }}>
+            <thead><tr>
+              <th style={{...th, width:40}}>Sr No</th>
+              <th style={{...th, minWidth:170}}>Design Number</th>
+              <th style={th}>Qty Given</th>
+              <th style={th}>Qty Rcvd</th>
+              <th style={th}>Balance if any</th>
+              <th style={{...th, minWidth:140}}>Remarks</th>
+              <th style={{...th, width:36}} className="no-print"></th>
+            </tr></thead>
+            <tbody>
+              {sheetRows.map((s,i) => {
+                const bal=balance(s); const open=openId===s.id;
+                return (
+                  <tr key={s.id} style={{ background: bal===0 && +s.receivedQty>0 ? T.green+"10" : (i%2?T.surface:T.bg) }}>
+                    <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}</td>
+                    <td style={{...td, textAlign:"left"}}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span onClick={()=>setOpenId(open?null:s.id)} className="no-print" style={{ cursor:"pointer", color:T.gold, fontWeight:700 }}>{open?"[−]":"[+]"}</span>
+                        <input value={s.designNo} onChange={e=>updRow(s.id,{designNo:e.target.value})} placeholder="design no" style={{...txtIn, fontWeight:700, color:T.gold, width:90}} className="no-print" />
+                        <span className="print-only" style={{ fontWeight:700, color:T.gold, display:"none" }}>{s.designNo}</span>
+                      </div>
+                      <div style={{ marginTop: (open||(s.colourBreakup||[]).length>0) ? 6 : 0 }}>
+                        {(open ? (s.colourBreakup||[]) : (s.colourBreakup||[]).filter(c=>c.colour||c.size||c.qty)).map((c,ci) => (
+                          <div key={ci} style={{ display:"flex", gap:4, alignItems:"center", marginBottom:3, fontSize:12 }}>
+                            <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
+                            {open ? <>
+                              <input value={c.colour} onChange={e=>updColour(s.id,ci,"colour",e.target.value)} placeholder="colour" style={{...txtIn, width:70}} className="no-print" />
+                              <input value={c.size} onChange={e=>updColour(s.id,ci,"size",e.target.value)} placeholder="size" style={{...txtIn, width:50}} className="no-print" />
+                              <span style={{ color:T.steelLt }} className="no-print">-</span>
+                              <input type="number" value={c.qty} onChange={e=>updColour(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:45}} className="no-print" />
+                              <span onClick={()=>remColour(s.id,ci)} className="no-print" style={{ color:T.red, cursor:"pointer" }}>✕</span>
+                            </> : null}
+                            <span className="print-only" style={{ display:"none", color:T.text }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>
+                          </div>
+                        ))}
+                        {open && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
+                      </div>
+                    </td>
+                    <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{s.givenQty||""}</td>
+                    <td style={td} className="no-print"><input type="number" value={s.receivedQty||""} onChange={e=>updRow(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:55}} /></td>
+                    <td style={{...td, display:"none"}} className="print-only">{s.receivedQty||""}</td>
+                    <td style={{...td, fontFamily:T.mono, fontWeight:700, color: bal>0?T.red:T.green}}>{bal||""}</td>
+                    <td style={td} className="no-print"><input value={s.remark} onChange={e=>updRow(s.id,{remark:e.target.value})} style={{...txtIn, width:"100%", boxSizing:"border-box"}} /></td>
+                    <td style={{...td, display:"none"}} className="print-only">{s.remark||""}</td>
+                    <td style={td} className="no-print"><span onClick={()=>delRow(s.id)} style={{ color:T.red, cursor:"pointer" }}>🗑</span></td>
+                  </tr>
+                );
+              })}
+              {sheetRows.length===0 && <tr><td colSpan={7} style={{...td, color:T.textDim, padding:24}}>Koi sample entry nahi. "+ Add Line" dabao.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div className="no-print" style={{ marginTop:14 }}><Btn label="+ Add Design Line" onClick={addLine} small /></div>
+      </div>
     </div>
   );
 }
 
-// ── Barcode Panel ─────────────────────────────────────────────────────────────
 function BarcodePanel({ design, jobbers, onUpdate }) {
   const bills = (design.supplierBills || []).filter(b => (b.billType||"Fabric")==="Fabric");
   const colors = design.colors || [];
