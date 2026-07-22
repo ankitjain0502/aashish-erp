@@ -2550,6 +2550,7 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
 function SamplesTab({ bookings, showToast, currentUser, onBack }) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [savedId, setSavedId] = useState(null);
   const [header, setHeader] = useState({ agent:"", date:new Date().toISOString().slice(0,10) });
 
   useEffect(() => { load(); }, []);
@@ -2563,6 +2564,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
   function balance(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
 
   async function addLine(){
+    if(!header.agent.trim()){ showToast("Pehle Agent/Distributor naam likho","error"); return; }
     const s={ id:`SM${Date.now()}`, agent:header.agent, designNo:"", givenQty:0, receivedQty:0, remark:"", colourBreakup:[], createdBy:currentUser };
     await dbUpsert("samples", sToRow(s));
     setRows(p=>[...p, s]);
@@ -2573,6 +2575,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
     if(patch.colourBreakup) ns.givenQty = colourTotal(patch.colourBreakup);
     await dbUpsert("samples", sToRow(ns));
     setRows(p=>p.map(x=>x.id===id?ns:x));
+    setSavedId(id); setTimeout(()=>setSavedId(cur=>cur===id?null:cur), 1500);
   }
   async function delRow(id){ if(!window.confirm("Delete this line?")) return; await dbDelete("samples", id); setRows(p=>p.filter(x=>x.id!==id)); }
 
@@ -2623,7 +2626,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
                 const bal=balance(s); const open=openId===s.id;
                 return (
                   <tr key={s.id} style={{ background: bal===0 && +s.receivedQty>0 ? T.green+"10" : (i%2?T.surface:T.bg) }}>
-                    <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}</td>
+                    <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}{savedId===s.id && <div className="no-print" style={{ color:T.green, fontSize:9, marginTop:2 }}>✓ Saved</div>}</td>
                     <td style={{...td, textAlign:"left"}}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span onClick={()=>setOpenId(open?null:s.id)} className="no-print" style={{ cursor:"pointer", color:T.gold, fontWeight:700 }}>{open?"[−]":"[+]"}</span>
