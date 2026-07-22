@@ -2631,7 +2631,7 @@ function SamplesTab({ bookings, showToast, currentUser, onBack }) {
                         <span className="print-only" style={{ fontWeight:700, color:T.gold, display:"none" }}>{s.designNo}</span>
                       </div>
                       <div style={{ marginTop: (open||(s.colourBreakup||[]).length>0) ? 6 : 0 }}>
-                        {(open ? (s.colourBreakup||[]) : (s.colourBreakup||[]).filter(c=>c.colour||c.size||c.qty)).map((c,ci) => (
+                        {(open ? (s.colourBreakup||[]) : (s.colourBreakup||[]).filter(c=>String(c.colour||"").trim()||String(c.size||"").trim()||String(c.qty||"").trim())).map((c,ci) => (
                           <div key={ci} style={{ display:"flex", gap:4, alignItems:"center", marginBottom:3, fontSize:12 }}>
                             <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
                             {open ? <>
