@@ -2556,6 +2556,8 @@ function SamplesTab({ showToast, currentUser, onBack }) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [savedId, setSavedId] = useState(null);
+  const [editingId, setEditingId] = useState(null);   // row currently unlocked for editing
+  const [newRowId, setNewRowId] = useState(null);      // freshly added row, always editable until first save
   const [header, setHeader] = useState({ agent:"", date:new Date().toISOString().slice(0,10) });
 
   useEffect(() => { load(); }, []);
@@ -2574,6 +2576,7 @@ function SamplesTab({ showToast, currentUser, onBack }) {
     const s={ id:`SM${Date.now()}`, agent:header.agent, designNo:"", givenQty:0, receivedQty:0, remark:"", colourBreakup:[], createdBy:currentUser };
     await dbUpsert("samples", sToRow(s));
     setRows(p=>[...p, s]);
+    setNewRowId(s.id); setEditingId(s.id); setOpenId(s.id);
   }
   async function updRow(id, patch){
     const s=rows.find(x=>x.id===id); if(!s) return;
@@ -2679,50 +2682,59 @@ function SamplesTab({ showToast, currentUser, onBack }) {
             <tbody>
               {sheetRows.map((s,i) => {
                 const bal=balance(s); const open=openId===s.id;
+                const unlocked = editingId===s.id || newRowId===s.id;
+                const visibleColours = (open ? (s.colourBreakup||[]) : (s.colourBreakup||[]).filter(c=>String(c.colour||"").trim()||String(c.size||"").trim()||String(c.qty||"").trim()));
                 return (
-                  <tr key={s.id} style={{ background: bal===0 && +s.receivedQty>0 ? T.green+"10" : (i%2?T.surface:T.bg) }}>
+                  <tr key={s.id} style={{ background: bal===0 && +s.receivedQty>0 ? T.green+"10" : (i%2?T.surface:T.bg), opacity: unlocked?1:0.92 }}>
                     <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}{savedId===s.id && <div className="no-print" style={{ color:T.green, fontSize:9, marginTop:2 }}>✓ Saved</div>}</td>
                     <td style={{...td, textAlign:"left"}}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                        <span onClick={()=>setOpenId(open?null:s.id)} className="no-print" style={{ cursor:"pointer", color:T.gold, fontWeight:700 }}>{open?"[−]":"[+]"}</span>
-                        <input value={s.designNo} onChange={e=>updRow(s.id,{designNo:e.target.value})} placeholder="design no" style={{...txtIn, fontWeight:700, color:T.gold, width:90}} className="no-print" />
+                        {(s.colourBreakup||[]).length>0 && <span onClick={()=>setOpenId(open?null:s.id)} className="no-print" style={{ cursor:"pointer", color:T.gold, fontWeight:700 }}>{open?"[−]":"[+]"}</span>}
+                        {unlocked
+                          ? <input value={s.designNo} onChange={e=>updRow(s.id,{designNo:e.target.value})} placeholder="design no" style={{...txtIn, fontWeight:700, color:T.gold, width:90}} className="no-print" />
+                          : <span className="no-print" style={{ fontWeight:700, color:T.gold, fontFamily:T.mono }}>{s.designNo||"—"}</span>}
                         <span className="print-only" style={{ fontWeight:700, color:T.gold, display:"none" }}>{s.designNo}</span>
                       </div>
-                      <div style={{ marginTop: (open||(s.colourBreakup||[]).length>0) ? 6 : 0 }}>
-                        {(open ? (s.colourBreakup||[]) : (s.colourBreakup||[]).filter(c=>String(c.colour||"").trim()||String(c.size||"").trim()||String(c.qty||"").trim())).map((c,ci) => (
-                          <div key={ci} style={{ display:"flex", gap:4, alignItems:"center", marginBottom:3, fontSize:12 }}>
-                            <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
-                            {open ? <>
-                              <input value={c.colour} onChange={e=>updColour(s.id,ci,"colour",e.target.value)} placeholder="colour" style={{...txtIn, width:70}} className="no-print" />
-                              <input value={c.size} onChange={e=>updColour(s.id,ci,"size",e.target.value)} placeholder="size" style={{...txtIn, width:50}} className="no-print" />
-                              <span style={{ color:T.steelLt }} className="no-print">-</span>
-                              <input type="number" value={c.qty} onChange={e=>updColour(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:45}} className="no-print" />
-                              <span onClick={()=>remColour(s.id,ci)} className="no-print" style={{ color:T.red, cursor:"pointer" }}>✕</span>
-                            </> : null}
-                            <span className="print-only" style={{ display:"none", color:T.text }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>
-                          </div>
-                        ))}
-                        {open && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
-                        {!open && (s.colourBreakup||[]).length===0 && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
-                      </div>
+                      {(unlocked || visibleColours.length>0) && (
+                        <div style={{ marginTop:6 }}>
+                          {(unlocked ? (s.colourBreakup||[]) : visibleColours).map((c,ci) => (
+                            <div key={ci} style={{ display:"flex", gap:4, alignItems:"center", marginBottom:3, fontSize:12 }}>
+                              <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
+                              {unlocked ? <>
+                                <input value={c.colour} onChange={e=>updColour(s.id,ci,"colour",e.target.value)} placeholder="colour" style={{...txtIn, width:70}} className="no-print" />
+                                <input value={c.size} onChange={e=>updColour(s.id,ci,"size",e.target.value)} placeholder="size" style={{...txtIn, width:50}} className="no-print" />
+                                <span style={{ color:T.steelLt }} className="no-print">-</span>
+                                <input type="number" value={c.qty} onChange={e=>updColour(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:45}} className="no-print" />
+                                <span onClick={()=>remColour(s.id,ci)} className="no-print" style={{ color:T.red, cursor:"pointer" }}>✕</span>
+                              </> : <span className="no-print" style={{ color:T.text, fontFamily:T.mono }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>}
+                              <span className="print-only" style={{ display:"none", color:T.text }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>
+                            </div>
+                          ))}
+                          {unlocked && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
+                        </div>
+                      )}
                     </td>
                     <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{s.givenQty||""}</td>
-                    <td style={td} className="no-print"><input type="number" value={s.receivedQty||""} onChange={e=>updRow(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:55}} /></td>
+                    <td style={td} className="no-print">{unlocked ? <input type="number" value={s.receivedQty||""} onChange={e=>updRow(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:55}} /> : (s.receivedQty||"—")}</td>
                     <td style={{...td, display:"none"}} className="print-only">{s.receivedQty||""}</td>
                     <td style={{...td, fontFamily:T.mono, fontWeight:700, color: bal>0?T.red:T.green}}>{bal||""}</td>
-                    <td style={td} className="no-print"><input value={s.remark} onChange={e=>updRow(s.id,{remark:e.target.value})} style={{...txtIn, width:"100%", boxSizing:"border-box"}} /></td>
+                    <td style={td} className="no-print">{unlocked ? <input value={s.remark} onChange={e=>updRow(s.id,{remark:e.target.value})} style={{...txtIn, width:"100%", boxSizing:"border-box"}} /> : <span style={{fontFamily:T.mono, fontSize:12}}>{s.remark||"—"}</span>}</td>
                     <td style={{...td, display:"none"}} className="print-only">{s.remark||""}</td>
-                    <td style={td} className="no-print"><span onClick={()=>delRow(s.id)} style={{ color:T.red, cursor:"pointer" }}>🗑</span></td>
+                    <td style={td} className="no-print">
+                      {unlocked
+                        ? <span onClick={()=>{ setEditingId(null); setNewRowId(cur=>cur===s.id?null:cur); setOpenId(null); showToast("Saved & locked ✓"); }} style={{ color:T.green, cursor:"pointer", fontWeight:700, fontSize:11 }}>🔒 Done</span>
+                        : <span onClick={()=>{ setEditingId(s.id); setOpenId(s.id); }} style={{ color:T.gold, cursor:"pointer", fontWeight:700, fontSize:11 }}>✏ Edit</span>}
+                      <span onClick={()=>delRow(s.id)} style={{ color:T.red, cursor:"pointer", marginLeft:8 }}>🗑</span>
+                    </td>
                   </tr>
                 );
               })}
-              {sheetRows.length===0 && <tr><td colSpan={7} style={{...td, color:T.textDim, padding:24}}>Koi sample entry nahi. "+ Add Line" dabao.</td></tr>}
+              {sheetRows.length===0 && <tr><td colSpan={7} style={{...td, color:T.textDim, padding:24}}>Koi sample entry nahi. "+ Add New Sample" dabao.</td></tr>}
             </tbody>
           </table>
         </div>
-        <div className="no-print" style={{ marginTop:14, display:"flex", gap:10, alignItems:"center" }}>
-          <Btn label="+ Add Design Line" onClick={addLine} small />
-          <Btn label="💾 Save" onClick={()=>showToast("Sab kuch already saved ✓")} color={T.green} small />
+        <div className="no-print" style={{ marginTop:14 }}>
+          <Btn label="+ Add New Sample" onClick={addLine} />
         </div>
       </div>
     </div>
