@@ -2552,13 +2552,280 @@ function BookingsPanel({ bookings, setBookings, designs, showToast, currentUser 
 
 // ── Samples Tab (Booking ke andar) — agent-wise grouped sample tracking ───────
 // ── Samples Tab — bilkul kaagaz jaisa: Agent/Distributor + Date header, ek table ──
+// ── Samples — sheet based (ek sheet = ek agent + ek date, kaagaz jaisa) ──────
 function SamplesTab({ showToast, currentUser, onBack }) {
+  const [rows, setRows] = useState([]);            // all sample lines from DB
+  const [activeSheet, setActiveSheet] = useState(null);  // { agent, date }
+  const [showNewSheet, setShowNewSheet] = useState(false);
+  const [newSheet, setNewSheet] = useState({ agent:"", date:new Date().toISOString().slice(0,10) });
+  const [openId, setOpenId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [showLineModal, setShowLineModal] = useState(false);
+  const [lineForm, setLineForm] = useState({ designNo:"", colourBreakup:[{colour:"",size:"",qty:""}], remark:"" });
+
+  useEffect(() => { load(); }, []);
+  async function load() {
+    const r = await dbSelect("samples");
+    setRows((r||[]).map(rowToS));
+  }
+  function rowToS(r){ return { id:r.id, agent:r.agent||"", sheetDate:r.sheet_date||r.created_at?.slice(0,10)||"", designNo:r.design_no||"", givenQty:r.given_qty||0, receivedQty:r.received_qty||0, remark:r.remark||"", colourBreakup:r.colour_breakup||[], createdBy:r.created_by||"" }; }
+  function sToRow(s){ return { id:s.id, agent:s.agent||"", sheet_date:s.sheetDate||"", design_no:s.designNo||"", given_qty:+s.givenQty||0, received_qty:+s.receivedQty||0, remark:s.remark||"", colour_breakup:s.colourBreakup||[], created_by:s.createdBy||currentUser }; }
+
+  function colourTotal(cb){ return (cb||[]).reduce((a,c)=>a+(+c.qty||0),0); }
+  function balance(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
+
+  // ── sheets = unique (agent + date) combos ──
+  const sheets = (() => {
+    const m = {};
+    rows.forEach(r => {
+      const key = `${r.agent}||${r.sheetDate}`;
+      if (!m[key]) m[key] = { agent:r.agent, date:r.sheetDate, lines:[], totalGiven:0, totalBal:0 };
+      m[key].lines.push(r);
+      m[key].totalGiven += (+r.givenQty||0);
+      m[key].totalBal += balance(r);
+    });
+    return Object.values(m).sort((a,b)=> (b.date||"").localeCompare(a.date||"") || a.agent.localeCompare(b.agent));
+  })();
+
+  const sheetLines = activeSheet ? rows.filter(r => r.agent===activeSheet.agent && r.sheetDate===activeSheet.date) : [];
+
+  function createSheet(){
+    if(!newSheet.agent.trim()){ showToast("Agent/Distributor naam likho","error"); return; }
+    setActiveSheet({ agent:newSheet.agent.trim(), date:newSheet.date });
+    setShowNewSheet(false);
+    setNewSheet({ agent:"", date:new Date().toISOString().slice(0,10) });
+  }
+
+  // ── line modal ──
+  function openLineModal(){ setLineForm({ designNo:"", colourBreakup:[{colour:"",size:"",qty:""}], remark:"" }); setShowLineModal(true); }
+  function lfUpdColour(idx,k,v){ setLineForm(f=>({...f, colourBreakup:f.colourBreakup.map((c,i)=>i===idx?{...c,[k]:v}:c)})); }
+  function lfAddColour(){ setLineForm(f=>({...f, colourBreakup:[...f.colourBreakup,{colour:"",size:"",qty:""}]})); }
+  function lfRemColour(idx){ setLineForm(f=>({...f, colourBreakup:f.colourBreakup.filter((c,i)=>i!==idx)})); }
+
+  async function saveLine(){
+    if(!lineForm.designNo.trim()){ showToast("Design number likho","error"); return; }
+    const valid = lineForm.colourBreakup.filter(c=>String(c.colour||"").trim()||String(c.size||"").trim()||String(c.qty||"").trim());
+    const given = valid.reduce((a,c)=>a+(+c.qty||0),0);
+    const s = { id:`SM${Date.now()}`, agent:activeSheet.agent, sheetDate:activeSheet.date, designNo:lineForm.designNo.trim(), givenQty:given, receivedQty:0, remark:lineForm.remark||"", colourBreakup:valid, createdBy:currentUser };
+    await dbUpsert("samples", sToRow(s));
+    setRows(p=>[...p, s]);
+    setShowLineModal(false);
+    showToast("Design line added ✓");
+  }
+
+  async function updRow(id, patch){
+    const s=rows.find(x=>x.id===id); if(!s) return;
+    const ns={...s,...patch};
+    if(patch.colourBreakup) ns.givenQty = colourTotal(patch.colourBreakup);
+    await dbUpsert("samples", sToRow(ns));
+    setRows(p=>p.map(x=>x.id===id?ns:x));
+  }
+  async function delRow(id){ if(!window.confirm("Ye design line delete karein?")) return; await dbDelete("samples", id); setRows(p=>p.filter(x=>x.id!==id)); }
+  function addColour(id){ const s=rows.find(x=>x.id===id); updRow(id,{ colourBreakup:[...(s.colourBreakup||[]), {colour:"",size:"",qty:""}] }); }
+  function updColour(id, idx, k, v){ const s=rows.find(x=>x.id===id); updRow(id,{ colourBreakup:(s.colourBreakup||[]).map((c,i)=>i===idx?{...c,[k]:v}:c) }); }
+  function remColour(id, idx){ const s=rows.find(x=>x.id===id); updRow(id,{ colourBreakup:(s.colourBreakup||[]).filter((c,i)=>i!==idx) }); }
+
+  const th={ padding:"8px 10px", fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase", border:`1px solid ${T.border}`, background:T.surface, textAlign:"center" };
+  const td={ padding:"7px 10px", border:`1px solid ${T.border}`, textAlign:"center", verticalAlign:"top" };
+  const txtIn={ background:T.bg, border:`1px solid ${T.border}`, borderRadius:5, color:T.text, fontFamily:T.mono, fontSize:12, padding:"6px 8px", outline:"none" };
+
+  // ══════════ SHEET LIST ══════════
+  if (!activeSheet) {
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, marginBottom:16, alignItems:"center", flexWrap:"wrap" }} className="no-print">
+          {onBack && <Btn label="← Back" onClick={onBack} color={T.surface} textColor={T.steelLt} small />}
+          <div style={{ flex:1, fontFamily:T.mono, fontWeight:700, fontSize:14, color:T.gold }}>Sample Sheets</div>
+          <Btn label="+ New Sample Sheet" onClick={()=>setShowNewSheet(true)} />
+        </div>
+
+        {sheets.length===0 && <div style={{ textAlign:"center", color:T.textDim, padding:30, fontFamily:T.mono, fontSize:12 }}>Koi sheet nahi hai. "+ New Sample Sheet" dabao.</div>}
+
+        {sheets.map((sh,i) => (
+          <div key={i} onClick={()=>setActiveSheet({ agent:sh.agent, date:sh.date })} style={{ background:T.card, borderRadius:10, padding:"12px 16px", marginBottom:8, border:`1px solid ${sh.totalBal>0?T.red+"55":T.border}`, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+            <div>
+              <div style={{ fontWeight:700, color:T.text, fontFamily:T.mono, fontSize:15 }}>{sh.agent}</div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginTop:2 }}>{sh.date} · {sh.lines.length} design{sh.lines.length!==1?"s":""} · {sh.totalGiven} pcs given</div>
+            </div>
+            <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color: sh.totalBal>0?T.red:T.green }}>
+              {sh.totalBal>0 ? `${sh.totalBal} balance` : "all clear ✓"}
+            </div>
+          </div>
+        ))}
+
+        {showNewSheet && (
+          <div className="no-print" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:16 }}>
+            <div style={{ background:T.card, borderRadius:14, padding:22, width:"100%", maxWidth:380 }}>
+              <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold, marginBottom:14 }}>New Sample Sheet</div>
+              <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Agent / Distributor *</label>
+              <input value={newSheet.agent} onChange={e=>setNewSheet(f=>({...f,agent:e.target.value}))} placeholder="naam type karo…" list="sample-agents" style={{ ...txtIn, display:"block", width:"100%", fontSize:15, fontWeight:700, marginTop:4, marginBottom:14, boxSizing:"border-box" }} />
+              <datalist id="sample-agents">{[...new Set(rows.map(r=>r.agent).filter(Boolean))].map(a=><option key={a} value={a} />)}</datalist>
+              <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Date *</label>
+              <input type="date" value={newSheet.date} onChange={e=>setNewSheet(f=>({...f,date:e.target.value}))} style={{ ...txtIn, display:"block", marginTop:4, marginBottom:18 }} />
+              <div style={{ display:"flex", gap:10 }}>
+                <Btn label="Create Sheet" onClick={createSheet} />
+                <Btn label="Cancel" onClick={()=>setShowNewSheet(false)} color={T.surface} textColor={T.steelLt} small />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ══════════ SHEET DETAIL (kaagaz jaisa) ══════════
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center", flexWrap:"wrap" }} className="no-print">
+        <Btn label="← All Sheets" onClick={()=>setActiveSheet(null)} color={T.surface} textColor={T.steelLt} small />
+        <div style={{ flex:1 }} />
+        <Btn label="🖨 Print / PDF" onClick={()=>window.print()} color={T.surface} textColor={T.steelLt} small />
+        <Btn label="+ Add Design Line" onClick={openLineModal} />
+      </div>
+
+      <div style={{ background:T.card, borderRadius:12, padding:18, border:`1px solid ${T.border}` }}>
+        <div style={{ textAlign:"center", fontFamily:T.mono, fontWeight:900, fontSize:16, color:T.gold, marginBottom:12 }}>AASHISH APPARELS</div>
+        <div style={{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:16, paddingBottom:12, borderBottom:`2px solid ${T.gold}` }}>
+          <div>
+            <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>AGENT / DISTRIBUTOR</span>
+            <div style={{ fontFamily:T.mono, fontSize:17, fontWeight:900, color:T.text }}>{activeSheet.agent}</div>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <span style={{ fontFamily:T.mono, fontSize:10, color:T.steelLt }}>DATE</span>
+            <div style={{ fontFamily:T.mono, fontSize:15, fontWeight:700, color:T.text }}>{activeSheet.date}</div>
+          </div>
+        </div>
+
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ borderCollapse:"collapse", width:"100%", minWidth:600 }}>
+            <thead><tr>
+              <th style={{...th, width:44}}>Sr No</th>
+              <th style={{...th, minWidth:170, textAlign:"left"}}>Design Number</th>
+              <th style={th}>Qty Given</th>
+              <th style={th}>Qty Rcvd</th>
+              <th style={th}>Balance if any</th>
+              <th style={{...th, minWidth:120}}>Remarks</th>
+              <th style={{...th, width:70}} className="no-print"></th>
+            </tr></thead>
+            <tbody>
+              {sheetLines.map((s,i) => {
+                const bal=balance(s); const open=openId===s.id; const editing=editingId===s.id;
+                return (
+                  <tr key={s.id} style={{ background: bal===0 && +s.receivedQty>0 ? T.green+"10" : (i%2?T.surface:T.bg) }}>
+                    <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}</td>
+                    <td style={{...td, textAlign:"left"}}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span onClick={()=>setOpenId(open?null:s.id)} className="no-print" style={{ cursor:"pointer", color:T.gold, fontWeight:700, fontFamily:T.mono }}>{open?"[−]":"[+]"}</span>
+                        {editing
+                          ? <input value={s.designNo} onChange={e=>updRow(s.id,{designNo:e.target.value})} style={{...txtIn, fontWeight:700, color:T.gold, width:90}} className="no-print" />
+                          : <span style={{ fontWeight:700, color:T.gold, fontFamily:T.mono, fontSize:14 }}>{s.designNo||"—"}</span>}
+                      </div>
+                      {(open || editing) && (
+                        <div style={{ marginTop:6 }} className="no-print">
+                          {(s.colourBreakup||[]).map((c,ci)=>(
+                            <div key={ci} style={{ display:"flex", gap:5, alignItems:"center", marginBottom:3 }}>
+                              <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
+                              {editing ? <>
+                                <input value={c.colour} onChange={e=>updColour(s.id,ci,"colour",e.target.value)} placeholder="colour" style={{...txtIn, width:70}} />
+                                <input value={c.size} onChange={e=>updColour(s.id,ci,"size",e.target.value)} placeholder="size" style={{...txtIn, width:50}} />
+                                <span style={{ color:T.steelLt }}>-</span>
+                                <input type="number" value={c.qty} onChange={e=>updColour(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:45}} />
+                                <span onClick={()=>remColour(s.id,ci)} style={{ color:T.red, cursor:"pointer" }}>✕</span>
+                              </> : <span style={{ color:T.text, fontFamily:T.mono, fontSize:12 }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>}
+                            </div>
+                          ))}
+                          {editing && <span onClick={()=>addColour(s.id)} style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
+                        </div>
+                      )}
+                      <div className="print-only" style={{ display:"none", marginTop:4 }}>
+                        {(s.colourBreakup||[]).map((c,ci)=>(
+                          <div key={"p"+ci} style={{ fontSize:11, color:T.text, fontFamily:T.mono }}>{ci+1}) {c.colour} {c.size?`${c.size}-`:""}{c.qty}</div>
+                        ))}
+                      </div>
+                    </td>
+                    <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold, fontSize:14}}>{s.givenQty||""}</td>
+                    <td style={td}>
+                      <span className="no-print">{editing ? <input type="number" value={s.receivedQty||""} onChange={e=>updRow(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:55}} /> : <span style={{fontFamily:T.mono, fontSize:14}}>{s.receivedQty||"—"}</span>}</span>
+                      <span className="print-only" style={{ display:"none", fontFamily:T.mono }}>{s.receivedQty||""}</span>
+                    </td>
+                    <td style={{...td, fontFamily:T.mono, fontWeight:700, fontSize:14, color: bal>0?T.red:T.green}}>{bal||""}</td>
+                    <td style={td}>
+                      <span className="no-print">{editing ? <input value={s.remark} onChange={e=>updRow(s.id,{remark:e.target.value})} style={{...txtIn, width:"100%", boxSizing:"border-box"}} /> : <span style={{fontFamily:T.mono, fontSize:12}}>{s.remark||"—"}</span>}</span>
+                      <span className="print-only" style={{ display:"none", fontFamily:T.mono, fontSize:12 }}>{s.remark||""}</span>
+                    </td>
+                    <td style={td} className="no-print">
+                      {editing
+                        ? <span onClick={()=>{ setEditingId(null); showToast("Saved ✓"); }} style={{ color:T.green, cursor:"pointer", fontWeight:700, fontSize:11 }}>🔒 Done</span>
+                        : <span onClick={()=>{ setEditingId(s.id); setOpenId(s.id); }} style={{ color:T.gold, cursor:"pointer", fontWeight:700, fontSize:11 }}>✏ Edit</span>}
+                      <span onClick={()=>delRow(s.id)} style={{ color:T.red, cursor:"pointer", marginLeft:8 }}>🗑</span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {sheetLines.length===0 && <tr><td colSpan={7} style={{...td, color:T.textDim, padding:24, fontFamily:T.mono, fontSize:12}}>Is sheet me koi design nahi. "+ Add Design Line" dabao.</td></tr>}
+            </tbody>
+            {sheetLines.length>0 && (
+              <tfoot><tr style={{ background:T.surface }}>
+                <td colSpan={2} style={{...td, textAlign:"right", fontFamily:T.mono, fontSize:11, color:T.steelLt}}>TOTAL</td>
+                <td style={{...td, fontFamily:T.mono, fontWeight:900, color:T.gold, fontSize:14}}>{sheetLines.reduce((a,s)=>a+(+s.givenQty||0),0)}</td>
+                <td style={{...td, fontFamily:T.mono, fontWeight:700, fontSize:13}}>{sheetLines.reduce((a,s)=>a+(+s.receivedQty||0),0)||""}</td>
+                <td style={{...td, fontFamily:T.mono, fontWeight:900, fontSize:14, color:T.red}}>{sheetLines.reduce((a,s)=>a+balance(s),0)||""}</td>
+                <td colSpan={2} style={td}></td>
+              </tr></tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      {showLineModal && (
+        <div className="no-print" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:16 }}>
+          <div style={{ background:T.card, borderRadius:14, padding:22, width:"100%", maxWidth:440, maxHeight:"85vh", overflowY:"auto" }}>
+            <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold, marginBottom:4 }}>Add Design Line</div>
+            <div style={{ fontFamily:T.mono, fontSize:11, color:T.steelLt, marginBottom:14 }}>{activeSheet.agent} · {activeSheet.date}</div>
+
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Design Number *</label>
+            <input value={lineForm.designNo} onChange={e=>setLineForm(f=>({...f,designNo:e.target.value}))} placeholder="e.g. 2083" style={{ ...txtIn, display:"block", width:"100%", fontSize:16, fontWeight:700, marginTop:4, marginBottom:14, boxSizing:"border-box" }} />
+
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Colour / Size / Qty</label>
+            <div style={{ marginTop:6, marginBottom:10 }}>
+              {lineForm.colourBreakup.map((c,ci)=>(
+                <div key={ci} style={{ display:"flex", gap:6, alignItems:"center", marginBottom:6 }}>
+                  <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
+                  <input value={c.colour} onChange={e=>lfUpdColour(ci,"colour",e.target.value)} placeholder="colour" style={{ ...txtIn, flex:1 }} />
+                  <input value={c.size} onChange={e=>lfUpdColour(ci,"size",e.target.value)} placeholder="size" style={{ ...txtIn, width:60 }} />
+                  <span style={{ color:T.steelLt }}>-</span>
+                  <input type="number" value={c.qty} onChange={e=>lfUpdColour(ci,"qty",e.target.value)} placeholder="qty" style={{ ...txtIn, width:55 }} />
+                  {lineForm.colourBreakup.length>1 && <span onClick={()=>lfRemColour(ci)} style={{ color:T.red, cursor:"pointer" }}>✕</span>}
+                </div>
+              ))}
+              <span onClick={lfAddColour} style={{ color:T.gold, cursor:"pointer", fontSize:12, fontWeight:700 }}>+ Add colour</span>
+            </div>
+
+            <div style={{ background:T.bg, borderRadius:8, padding:"8px 12px", marginBottom:14, fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>
+              Total Qty Given: {lineForm.colourBreakup.reduce((a,c)=>a+(+c.qty||0),0)}
+            </div>
+
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Remarks (optional)</label>
+            <input value={lineForm.remark} onChange={e=>setLineForm(f=>({...f,remark:e.target.value}))} placeholder="koi note…" style={{ ...txtIn, display:"block", width:"100%", marginTop:4, marginBottom:18, boxSizing:"border-box" }} />
+
+            <div style={{ display:"flex", gap:10 }}>
+              <Btn label="Save Design Line" onClick={saveLine} />
+              <Btn label="Cancel" onClick={()=>setShowLineModal(false)} color={T.surface} textColor={T.steelLt} small />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [savedId, setSavedId] = useState(null);
   const [editingId, setEditingId] = useState(null);   // row currently unlocked for editing
   const [newRowId, setNewRowId] = useState(null);      // freshly added row, always editable until first save
   const [header, setHeader] = useState({ agent:"", date:new Date().toISOString().slice(0,10) });
+  const [activeAgent, setActiveAgent] = useState(null);
+  const [newAgentName, setNewAgentName] = useState("");
 
   useEffect(() => { load(); }, []);
   async function load() {
@@ -2612,8 +2879,6 @@ function SamplesTab({ showToast, currentUser, onBack }) {
 
   // list of distinct agents that already have samples
   const agentList = [...new Set(rows.map(r=>r.agent).filter(Boolean))].sort();
-  const [activeAgent, setActiveAgent] = useState(null);
-  const [newAgentName, setNewAgentName] = useState("");
 
   async function openAgent(name){
     if(!name.trim()) return;
