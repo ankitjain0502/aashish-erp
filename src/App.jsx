@@ -2571,6 +2571,24 @@ function SamplesTab({ showToast, currentUser, onBack }) {
   function colourTotal(cb){ return (cb||[]).reduce((a,c)=>a+(+c.qty||0),0); }
   function balance(s){ return Math.max(0, (+s.givenQty||0)-(+s.receivedQty||0)); }
 
+  const [showModal, setShowModal] = useState(false);
+  const [modalForm, setModalForm] = useState({ designNo:"", colourBreakup:[{colour:"",size:"",qty:""}], remark:"" });
+
+  function openNewModal(){ setModalForm({ designNo:"", colourBreakup:[{colour:"",size:"",qty:""}], remark:"" }); setShowModal(true); }
+  function modalUpdColour(idx,k,v){ setModalForm(f=>({...f, colourBreakup:f.colourBreakup.map((c,i)=>i===idx?{...c,[k]:v}:c)})); }
+  function modalAddColour(){ setModalForm(f=>({...f, colourBreakup:[...f.colourBreakup,{colour:"",size:"",qty:""}]})); }
+  function modalRemColour(idx){ setModalForm(f=>({...f, colourBreakup:f.colourBreakup.filter((c,i)=>i!==idx)})); }
+  async function saveModal(){
+    if(!modalForm.designNo.trim()){ showToast("Design number likho","error"); return; }
+    const validColours = modalForm.colourBreakup.filter(c=>String(c.colour||"").trim()||String(c.size||"").trim()||String(c.qty||"").trim());
+    const given = validColours.reduce((a,c)=>a+(+c.qty||0),0);
+    const s={ id:`SM${Date.now()}`, agent:activeAgent, designNo:modalForm.designNo.trim(), givenQty:given, receivedQty:0, remark:modalForm.remark||"", colourBreakup:validColours, createdBy:currentUser };
+    await dbUpsert("samples", sToRow(s));
+    setRows(p=>[...p, s]);
+    setShowModal(false);
+    showToast("Sample added ✓");
+  }
+
   async function addLine(){
     if(!header.agent.trim()){ showToast("Pehle Agent/Distributor naam likho","error"); return; }
     const s={ id:`SM${Date.now()}`, agent:header.agent, designNo:"", givenQty:0, receivedQty:0, remark:"", colourBreakup:[], createdBy:currentUser };
@@ -2734,9 +2752,42 @@ function SamplesTab({ showToast, currentUser, onBack }) {
           </table>
         </div>
         <div className="no-print" style={{ marginTop:14 }}>
-          <Btn label="+ Add New Sample" onClick={addLine} />
+          <Btn label="+ Add New Sample" onClick={openNewModal} />
         </div>
       </div>
+
+      {showModal && (
+        <div className="no-print" style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:16 }}>
+          <div style={{ background:T.card, borderRadius:14, padding:22, width:"100%", maxWidth:440, maxHeight:"85vh", overflowY:"auto" }}>
+            <div style={{ fontFamily:T.mono, fontWeight:700, fontSize:15, color:T.gold, marginBottom:14 }}>New Sample — {activeAgent}</div>
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Design Number *</label>
+            <input value={modalForm.designNo} onChange={e=>setModalForm(f=>({...f,designNo:e.target.value}))} placeholder="e.g. 2083" style={{ ...txtIn, display:"block", width:"100%", fontSize:16, fontWeight:700, marginTop:4, marginBottom:14, boxSizing:"border-box" }} />
+
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Colour / Size / Qty</label>
+            <div style={{ marginTop:6, marginBottom:10 }}>
+              {modalForm.colourBreakup.map((c,ci) => (
+                <div key={ci} style={{ display:"flex", gap:6, alignItems:"center", marginBottom:6 }}>
+                  <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
+                  <input value={c.colour} onChange={e=>modalUpdColour(ci,"colour",e.target.value)} placeholder="colour" style={{ ...txtIn, flex:1 }} />
+                  <input value={c.size} onChange={e=>modalUpdColour(ci,"size",e.target.value)} placeholder="size" style={{ ...txtIn, width:60 }} />
+                  <span style={{ color:T.steelLt }}>-</span>
+                  <input type="number" value={c.qty} onChange={e=>modalUpdColour(ci,"qty",e.target.value)} placeholder="qty" style={{ ...txtIn, width:55 }} />
+                  {modalForm.colourBreakup.length>1 && <span onClick={()=>modalRemColour(ci)} style={{ color:T.red, cursor:"pointer" }}>✕</span>}
+                </div>
+              ))}
+              <span onClick={modalAddColour} style={{ color:T.gold, cursor:"pointer", fontSize:12, fontWeight:700 }}>+ Add colour</span>
+            </div>
+
+            <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Remarks (optional)</label>
+            <input value={modalForm.remark} onChange={e=>setModalForm(f=>({...f,remark:e.target.value}))} placeholder="koi note…" style={{ ...txtIn, display:"block", width:"100%", marginTop:4, marginBottom:16, boxSizing:"border-box" }} />
+
+            <div style={{ display:"flex", gap:10 }}>
+              <Btn label="Save Sample" onClick={saveModal} />
+              <Btn label="Cancel" onClick={()=>setShowModal(false)} color={T.surface} textColor={T.steelLt} small />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
