@@ -2701,7 +2701,6 @@ function SamplesTab({ showToast, currentUser, onBack }) {
               {sheetRows.map((s,i) => {
                 const bal=balance(s); const open=openId===s.id;
                 const unlocked = editingId===s.id || newRowId===s.id;
-                const visibleColours = (open ? (s.colourBreakup||[]) : (s.colourBreakup||[]).filter(c=>String(c.colour||"").trim()||String(c.size||"").trim()||String(c.qty||"").trim()));
                 return (
                   <tr key={s.id} style={{ background: bal===0 && +s.receivedQty>0 ? T.green+"10" : (i%2?T.surface:T.bg), opacity: unlocked?1:0.92 }}>
                     <td style={{...td, fontFamily:T.mono, color:T.steelLt}}>{i+1}{savedId===s.id && <div className="no-print" style={{ color:T.green, fontSize:9, marginTop:2 }}>✓ Saved</div>}</td>
@@ -2713,9 +2712,9 @@ function SamplesTab({ showToast, currentUser, onBack }) {
                           : <span className="no-print" style={{ fontWeight:700, color:T.gold, fontFamily:T.mono }}>{s.designNo||"—"}</span>}
                         <span className="print-only" style={{ fontWeight:700, color:T.gold, display:"none" }}>{s.designNo}</span>
                       </div>
-                      {(unlocked || visibleColours.length>0) && (
+                      {(unlocked || open) && (
                         <div style={{ marginTop:6 }}>
-                          {(unlocked ? (s.colourBreakup||[]) : visibleColours).map((c,ci) => (
+                          {(s.colourBreakup||[]).map((c,ci) => (
                             <div key={ci} style={{ display:"flex", gap:4, alignItems:"center", marginBottom:3, fontSize:12 }}>
                               <span style={{ color:T.steelLt, fontFamily:T.mono, fontSize:11 }}>{ci+1})</span>
                               {unlocked ? <>
@@ -2725,12 +2724,16 @@ function SamplesTab({ showToast, currentUser, onBack }) {
                                 <input type="number" value={c.qty} onChange={e=>updColour(s.id,ci,"qty",e.target.value)} placeholder="qty" style={{...txtIn, width:45}} className="no-print" />
                                 <span onClick={()=>remColour(s.id,ci)} className="no-print" style={{ color:T.red, cursor:"pointer" }}>✕</span>
                               </> : <span className="no-print" style={{ color:T.text, fontFamily:T.mono }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>}
-                              <span className="print-only" style={{ display:"none", color:T.text }}>{c.colour} {c.size?`${c.size}-`:""}{c.qty}</span>
                             </div>
                           ))}
                           {unlocked && <span onClick={()=>addColour(s.id)} className="no-print" style={{ color:T.gold, cursor:"pointer", fontSize:11, fontWeight:700 }}>+ Add colour</span>}
                         </div>
                       )}
+                      <div className="print-only" style={{ display:"none", marginTop:4 }}>
+                        {(s.colourBreakup||[]).map((c,ci)=>(
+                          <div key={"p"+ci} style={{ fontSize:11, color:T.text, fontFamily:T.mono }}>{ci+1}) {c.colour} {c.size?`${c.size}-`:""}{c.qty}</div>
+                        ))}
+                      </div>
                     </td>
                     <td style={{...td, fontFamily:T.mono, fontWeight:700, color:T.gold}}>{s.givenQty||""}</td>
                     <td style={td} className="no-print">{unlocked ? <input type="number" value={s.receivedQty||""} onChange={e=>updRow(s.id,{receivedQty:e.target.value})} style={{...txtIn, width:55}} /> : (s.receivedQty||"—")}</td>
@@ -2778,6 +2781,9 @@ function SamplesTab({ showToast, currentUser, onBack }) {
               <span onClick={modalAddColour} style={{ color:T.gold, cursor:"pointer", fontSize:12, fontWeight:700 }}>+ Add colour</span>
             </div>
 
+            <div style={{ background:T.bg, borderRadius:8, padding:"8px 12px", marginBottom:14, fontFamily:T.mono, fontSize:13, color:T.gold, fontWeight:700 }}>
+              Total Qty Given: {modalForm.colourBreakup.reduce((a,c)=>a+(+c.qty||0),0)}
+            </div>
             <label style={{ fontFamily:T.mono, fontSize:9, color:T.steelLt, textTransform:"uppercase" }}>Remarks (optional)</label>
             <input value={modalForm.remark} onChange={e=>setModalForm(f=>({...f,remark:e.target.value}))} placeholder="koi note…" style={{ ...txtIn, display:"block", width:"100%", marginTop:4, marginBottom:16, boxSizing:"border-box" }} />
 
